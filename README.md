@@ -4,10 +4,10 @@ The goal is to set up a local testing environment for the different relayers use
 
 ## Usage:
 
-After launching PostgreSQL, run:
+After launching PostgreSQL, run:  
  `sqlx migrate run --database-url postgres://postgres:postgres@localhost:5432/mock-gmp-api`
 
-To run the server : `cargo run --bin server` . 
+To run the server : `cargo run --bin server`  
 To run the client : `cargo run --bin client`
 
 ## Server Endpoints:
