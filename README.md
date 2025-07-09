@@ -14,4 +14,4 @@ To run the client : `cargo run --bin client`
 
 GET /tasks  
 POST /events  
-POST /<address>/broadacast  
+POST /\<address\>/broadacast  
