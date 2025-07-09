@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 
 #[derive(Clone, Debug)]
@@ -5,11 +6,11 @@ pub struct PostgresDB {
     pool: PgPool,
 }
 
-#[derive(Debug, sqlx::FromRow)]
-struct Task {
-    id: i32,
-    name: String,
-    description: String,
+#[derive(Debug, sqlx::FromRow, Serialize, Deserialize)]
+pub struct Task {
+    pub id: i64,
+    pub name: String,
+    pub description: String,
 }
 
 impl PostgresDB {

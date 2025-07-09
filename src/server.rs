@@ -54,8 +54,12 @@ async fn events(mut payload: web::Payload) -> Result<HttpResponse, Error> {
 }
 
 #[get("/tasks")]
-async fn tasks() -> impl Responder {
-    format!("Hello, getting tasks")
+async fn tasks(db: web::Data<PostgresDB>) -> Result<HttpResponse, Error> {
+    let tasks = db
+        .get_tasks()
+        .await
+        .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
+    Ok(HttpResponse::Ok().json(tasks))
 }
 
 impl Server {
@@ -63,11 +67,12 @@ impl Server {
         Self { port, address, db }
     }
 
-    pub async fn run(&self) -> anyhow::Result<()> {
+    pub async fn run(self) -> anyhow::Result<()> {
         let addr = format!("{}:{}", self.address, self.port);
 
-        HttpServer::new(|| {
+        HttpServer::new(move || {
             App::new()
+                .app_data(web::Data::new(self.db.clone()))
                 .service(tasks)
                 .service(address_broadcast)
                 .service(events)
