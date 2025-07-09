@@ -1,4 +1,4 @@
-use actix_web::{App, Error, HttpResponse, HttpServer, Responder, error, get, post, web};
+use actix_web::{App, Error, HttpResponse, HttpServer, error, get, post, web};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 
@@ -53,13 +53,19 @@ async fn events(mut payload: web::Payload) -> Result<HttpResponse, Error> {
     Ok(HttpResponse::Ok().json(obj))
 }
 
-#[get("/tasks")]
+// attempting to mock call in relayer :  format!("{}/chains/{}/tasks", self.rpc_url, self.chain); in get_tasks
+#[get("/chains/{chain}/tasks")]
 async fn tasks(db: web::Data<PostgresDB>) -> Result<HttpResponse, Error> {
     let tasks = db
         .get_tasks()
         .await
         .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
-    Ok(HttpResponse::Ok().json(tasks))
+
+    let response = serde_json::json!({
+        "tasks": tasks
+    });
+
+    Ok(HttpResponse::Ok().json(response))
 }
 
 impl Server {

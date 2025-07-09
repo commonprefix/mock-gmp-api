@@ -15,7 +15,7 @@ impl Client {
     }
 
     pub async fn get_tasks(&self) -> Result<String, Box<dyn Error>> {
-        let url = format!("{}/tasks", self.base_url);
+        let url = format!("{}/chains/1/tasks", self.base_url);
 
         println!("Making GET request to: {}", url);
 
