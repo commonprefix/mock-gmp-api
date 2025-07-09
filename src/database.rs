@@ -1,4 +1,5 @@
 use crate::{gmp_types::Task, utils::parse_task};
+use serde_json;
 use sqlx::{PgPool, Row};
 
 #[derive(Clone, Debug)]
@@ -18,11 +19,15 @@ impl PostgresDB {
 
         Ok(rows
             .iter()
-            .filter_map(|row| match parse_task(&row.get("task")) {
-                Ok(task) => Some(task),
-                Err(e) => {
-                    println!("Failed to parse task: {:?}", e);
-                    None
+            .filter_map(|row| {
+                let task_text: String = row.get("task");
+                let task_json = serde_json::from_str(&task_text).unwrap_or_default();
+                match parse_task(&task_json) {
+                    Ok(task) => Some(task),
+                    Err(e) => {
+                        println!("Failed to parse task: {:?}", e);
+                        None
+                    }
                 }
             })
             .collect::<Vec<_>>())
