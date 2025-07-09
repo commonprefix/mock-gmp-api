@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub struct Server {
     pub port: u16,
     pub address: String,
+    //pub DB_connection
 }
 
 const MAX_SIZE: usize = 262_144; // max payload size is 256k
@@ -31,7 +32,7 @@ async fn address_broadcast(
 
     let obj = serde_json::from_slice::<MyObj>(&body)?;
     println!("obj: {:?} to address: {}", obj, address);
-    Ok(HttpResponse::Ok().json(obj)) // <- send response
+    Ok(HttpResponse::Ok().json(obj))
 }
 
 #[post("/events")]
@@ -47,7 +48,7 @@ async fn events(mut payload: web::Payload) -> Result<HttpResponse, Error> {
 
     let obj = serde_json::from_slice::<MyObj>(&body)?;
     println!("obj: {:?}", obj);
-    Ok(HttpResponse::Ok().json(obj)) // <- send response
+    Ok(HttpResponse::Ok().json(obj))
 }
 
 #[get("/tasks")]
