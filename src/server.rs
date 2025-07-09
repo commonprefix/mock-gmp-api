@@ -2,10 +2,12 @@ use actix_web::{App, Error, HttpResponse, HttpServer, Responder, error, get, pos
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 
+use crate::PostgresDB;
+
 pub struct Server {
     pub port: u16,
     pub address: String,
-    //pub DB_connection
+    pub db: PostgresDB,
 }
 
 const MAX_SIZE: usize = 262_144; // max payload size is 256k
@@ -57,8 +59,8 @@ async fn tasks() -> impl Responder {
 }
 
 impl Server {
-    pub fn new(port: u16, address: String) -> Self {
-        Self { port, address }
+    pub fn new(port: u16, address: String, db: PostgresDB) -> Self {
+        Self { port, address, db }
     }
 
     pub async fn run(&self) -> anyhow::Result<()> {
