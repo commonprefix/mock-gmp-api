@@ -33,7 +33,7 @@ fn string_to_event_type(event_type: &str) -> EventType {
         "MESSAGE_EXECUTED" => EventType::MessageExecuted,
         "CANNOT_EXECUTE_MESSAGE_V2" => EventType::CannotExecuteMessageV2,
         "ITS_INTERCHAIN_TRANSFER" => EventType::ITSInterchainTransfer,
-        _ => EventType::Call, // Default fallback
+        _ => EventType::Call,
     }
 }
 
@@ -57,7 +57,7 @@ async fn address_broadcast(
 }
 
 #[post("/chains/{chain}/events")]
-async fn events(
+async fn post_events(
     chain: web::Path<String>,
     events_db: web::Data<EventsModel>,
     mut payload: web::Payload,
@@ -190,7 +190,10 @@ async fn events(
 }
 
 #[post("/chains/{chain}/task")]
-async fn task(db: web::Data<TasksModel>, mut payload: web::Payload) -> Result<HttpResponse, Error> {
+async fn post_task(
+    db: web::Data<TasksModel>,
+    mut payload: web::Payload,
+) -> Result<HttpResponse, Error> {
     let mut body = web::BytesMut::new();
     while let Some(chunk) = payload.next().await {
         let chunk = chunk?;
@@ -242,7 +245,7 @@ async fn task(db: web::Data<TasksModel>, mut payload: web::Payload) -> Result<Ht
 }
 
 #[get("/chains/{chain}/tasks")]
-async fn tasks(
+async fn get_tasks(
     db: web::Data<TasksModel>,
     query: web::Query<HashMap<String, String>>,
 ) -> Result<HttpResponse, Error> {
@@ -288,10 +291,10 @@ impl Server {
             App::new()
                 .app_data(web::Data::new(self.tasks_model.clone()))
                 .app_data(web::Data::new(self.events_model.clone()))
-                .service(tasks)
-                .service(task)
+                .service(get_tasks)
+                .service(post_task)
                 .service(address_broadcast)
-                .service(events)
+                .service(post_events)
         })
         .bind(addr)?
         .run()
