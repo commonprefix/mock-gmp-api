@@ -5,6 +5,5 @@ CREATE TABLE IF NOT EXISTS tasks (
     chain TEXT NOT NULL,
     timestamp TEXT NOT NULL,
     type task_type NOT NULL,
-    meta TEXT DEFAULT NULL,
-    task TEXT NOT NULL DEFAULT '{}'  -- should have no default probably, leaving it as is for simplicity
+    task TEXT NOT NULL DEFAULT '{}'
 )

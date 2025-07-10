@@ -5,15 +5,17 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 use crate::{
-    PostgresDB,
-    gmp_types::{Event, PostEventResponse, PostEventResult, Task},
+    TasksModel,
+    gmp_types::{Event, EventType, PostEventResponse, PostEventResult, Task},
+    models::events::EventsModel,
     utils::parse_task,
 };
 
 pub struct Server {
     pub port: u16,
     pub address: String,
-    pub db: PostgresDB,
+    pub tasks_model: TasksModel,
+    pub events_model: EventsModel,
 }
 
 const MAX_SIZE: usize = 262_144; // max payload size is 256k
@@ -21,6 +23,18 @@ const MAX_SIZE: usize = 262_144; // max payload size is 256k
 #[derive(Serialize, Deserialize, Debug)]
 struct EventsRequest {
     events: Vec<Event>,
+}
+
+fn string_to_event_type(event_type: &str) -> EventType {
+    match event_type {
+        "CALL" => EventType::Call,
+        "GAS_REFUNDED" => EventType::GasRefunded,
+        "GAS_CREDIT" => EventType::GasCredit,
+        "MESSAGE_EXECUTED" => EventType::MessageExecuted,
+        "CANNOT_EXECUTE_MESSAGE_V2" => EventType::CannotExecuteMessageV2,
+        "ITS_INTERCHAIN_TRANSFER" => EventType::ITSInterchainTransfer,
+        _ => EventType::Call, // Default fallback
+    }
 }
 
 #[post("/{address}/broadcast")]
@@ -45,6 +59,7 @@ async fn address_broadcast(
 #[post("/chains/{chain}/events")]
 async fn events(
     chain: web::Path<String>,
+    events_db: web::Data<EventsModel>,
     mut payload: web::Payload,
 ) -> Result<HttpResponse, Error> {
     let mut body = web::BytesMut::new();
@@ -64,22 +79,109 @@ async fn events(
         events_request.events.len(),
         chain
     );
-    for (i, event) in events_request.events.iter().enumerate() {
-        println!("Event {}: {:?}", i, event);
-    }
 
-    // Mock processing - create a successful result for each event
-    let results: Vec<PostEventResult> = events_request
-        .events
-        .iter()
-        .enumerate()
-        .map(|(index, _event)| PostEventResult {
-            status: "success".to_string(),
-            index,
-            error: None,
-            retriable: None,
-        })
-        .collect();
+    let mut results: Vec<PostEventResult> = Vec::new();
+
+    for (index, event) in events_request.events.iter().enumerate() {
+        println!("Event {}: {:?}", index, event);
+
+        let (event_id, event_type, timestamp) = match event {
+            Event::Call { common, .. } => (
+                &common.event_id,
+                &common.r#type,
+                common
+                    .meta
+                    .as_ref()
+                    .map(|m| m.timestamp.as_str())
+                    .unwrap_or("unknown"),
+            ),
+            Event::GasRefunded { common, .. } => (
+                &common.event_id,
+                &common.r#type,
+                common
+                    .meta
+                    .as_ref()
+                    .map(|m| m.timestamp.as_str())
+                    .unwrap_or("unknown"),
+            ),
+            Event::GasCredit { common, .. } => (
+                &common.event_id,
+                &common.r#type,
+                common
+                    .meta
+                    .as_ref()
+                    .map(|m| m.timestamp.as_str())
+                    .unwrap_or("unknown"),
+            ),
+            Event::MessageExecuted { common, .. } => (
+                &common.event_id,
+                &common.r#type,
+                common
+                    .meta
+                    .as_ref()
+                    .map(|m| m.common_meta.timestamp.as_str())
+                    .unwrap_or("unknown"),
+            ),
+            Event::CannotExecuteMessageV2 { common, .. } => (
+                &common.event_id,
+                &common.r#type,
+                common
+                    .meta
+                    .as_ref()
+                    .map(|m| m.timestamp.as_str())
+                    .unwrap_or("unknown"),
+            ),
+            Event::ITSInterchainTransfer { common, .. } => (
+                &common.event_id,
+                &common.r#type,
+                common
+                    .meta
+                    .as_ref()
+                    .map(|m| m.timestamp.as_str())
+                    .unwrap_or("unknown"),
+            ),
+        };
+
+        let event_json = match serde_json::to_string(event) {
+            Ok(json) => json,
+            Err(e) => {
+                results.push(PostEventResult {
+                    status: "error".to_string(),
+                    index,
+                    error: Some(format!("Failed to serialize event: {}", e)),
+                    retriable: Some(true),
+                });
+                continue;
+            }
+        };
+
+        match events_db
+            .upsert(
+                event_id,
+                timestamp,
+                string_to_event_type(event_type),
+                &event_json,
+            )
+            .await
+        {
+            Ok(_) => {
+                results.push(PostEventResult {
+                    status: "ACCEPTED".to_string(),
+                    index,
+                    error: None,
+                    retriable: None,
+                });
+            }
+            Err(e) => {
+                results.push(PostEventResult {
+                    status: "error".to_string(),
+                    index,
+                    error: Some(format!("Database error: {}", e)),
+                    retriable: Some(true),
+                });
+            }
+        }
+    }
 
     let response = PostEventResponse { results };
 
@@ -88,7 +190,7 @@ async fn events(
 }
 
 #[post("/task")]
-async fn task(db: web::Data<PostgresDB>, mut payload: web::Payload) -> Result<HttpResponse, Error> {
+async fn task(db: web::Data<TasksModel>, mut payload: web::Payload) -> Result<HttpResponse, Error> {
     let mut body = web::BytesMut::new();
     while let Some(chunk) = payload.next().await {
         let chunk = chunk?;
@@ -101,16 +203,18 @@ async fn task(db: web::Data<PostgresDB>, mut payload: web::Payload) -> Result<Ht
     let json_value = serde_json::from_slice::<Value>(&body)?;
     let task = parse_task(&json_value).map_err(|e| error::ErrorBadRequest(e.to_string()))?;
 
-    let task_json = json_value.get("task").unwrap();
+    if matches!(task, Task::Unknown(_)) {
+        return Err(error::ErrorBadRequest("Cannot store unknown tasks"));
+    }
 
     // without the macro t could not be different Task types
     macro_rules! get_common {
         ($t:expr) => {
-            (&$t.common.chain, &$t.common.timestamp, &$t.common.meta)
+            (&$t.common.chain, &$t.common.timestamp)
         };
     }
 
-    let (chain, timestamp, meta) = match &task {
+    let (chain, timestamp) = match &task {
         Task::Verify(t) => get_common!(t),
         Task::Execute(t) => get_common!(t),
         Task::GatewayTx(t) => get_common!(t),
@@ -119,7 +223,7 @@ async fn task(db: web::Data<PostgresDB>, mut payload: web::Payload) -> Result<Ht
         Task::Refund(t) => get_common!(t),
         Task::ReactToExpiredSigningSession(t) => get_common!(t),
         Task::ReactToRetriablePoll(t) => get_common!(t),
-        Task::Unknown(_) => return Err(error::ErrorBadRequest("Cannot store unknown tasks")),
+        Task::Unknown(_) => unreachable!("Unknown tasks are handled above"),
     };
 
     db.upsert(
@@ -127,10 +231,7 @@ async fn task(db: web::Data<PostgresDB>, mut payload: web::Payload) -> Result<Ht
         chain,
         timestamp,
         task.kind(),
-        meta.as_ref()
-            .map(|m| serde_json::to_string(m).unwrap())
-            .as_deref(),
-        Some(&serde_json::to_string(task_json).unwrap()),
+        Some(&serde_json::to_string(&json_value).unwrap()),
     )
     .await
     .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
@@ -140,10 +241,9 @@ async fn task(db: web::Data<PostgresDB>, mut payload: web::Payload) -> Result<Ht
     Ok(HttpResponse::Ok().json(task))
 }
 
-// attempting to mock call in relayer :  format!("{}/chains/{}/tasks", self.rpc_url, self.chain); in get_tasks
 #[get("/chains/{chain}/tasks")]
 async fn tasks(
-    db: web::Data<PostgresDB>,
+    db: web::Data<TasksModel>,
     query: web::Query<HashMap<String, String>>,
 ) -> Result<HttpResponse, Error> {
     let after = query.get("after");
@@ -167,8 +267,18 @@ async fn tasks(
 }
 
 impl Server {
-    pub fn new(port: u16, address: String, db: PostgresDB) -> Self {
-        Self { port, address, db }
+    pub fn new(
+        port: u16,
+        address: String,
+        tasks_model: TasksModel,
+        events_model: EventsModel,
+    ) -> Self {
+        Self {
+            port,
+            address,
+            tasks_model,
+            events_model,
+        }
     }
 
     pub async fn run(self) -> anyhow::Result<()> {
@@ -176,7 +286,8 @@ impl Server {
 
         HttpServer::new(move || {
             App::new()
-                .app_data(web::Data::new(self.db.clone()))
+                .app_data(web::Data::new(self.tasks_model.clone()))
+                .app_data(web::Data::new(self.events_model.clone()))
                 .service(tasks)
                 .service(task)
                 .service(address_broadcast)

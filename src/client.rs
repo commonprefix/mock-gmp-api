@@ -16,7 +16,7 @@ impl Client {
     }
 
     pub async fn get_tasks(&self) -> Result<String, Box<dyn Error>> {
-        let url = format!("{}/chains/1/tasks", self.base_url);
+        let url = format!("{}/chains/xrpl/tasks", self.base_url);
 
         println!("Making GET request to: {}", url);
 
@@ -36,6 +36,13 @@ impl Client {
     pub async fn post_task(&self, task: Value) -> Result<String, anyhow::Error> {
         let url = format!("{}/task", self.base_url);
         let response = self.client.post(&url).json(&task).send().await?;
+
+        Ok(response.text().await?)
+    }
+
+    pub async fn post_events(&self, events: Value) -> Result<String, anyhow::Error> {
+        let url = format!("{}/chains/xrpl/events", self.base_url);
+        let response = self.client.post(&url).json(&events).send().await?;
 
         Ok(response.text().await?)
     }

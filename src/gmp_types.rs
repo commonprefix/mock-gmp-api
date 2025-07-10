@@ -361,6 +361,23 @@ pub enum VerificationStatus {
     Unknown,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, sqlx::Type)]
+#[sqlx(type_name = "event_type")]
+pub enum EventType {
+    #[sqlx(rename = "CALL")]
+    Call,
+    #[sqlx(rename = "GAS_REFUNDED")]
+    GasRefunded,
+    #[sqlx(rename = "GAS_CREDIT")]
+    GasCredit,
+    #[sqlx(rename = "MESSAGE_EXECUTED")]
+    MessageExecuted,
+    #[sqlx(rename = "CANNOT_EXECUTE_MESSAGE_V2")]
+    CannotExecuteMessageV2,
+    #[sqlx(rename = "ITS_INTERCHAIN_TRANSFER")]
+    ITSInterchainTransfer,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(untagged)]
 pub enum Event {

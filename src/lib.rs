@@ -1,9 +1,9 @@
 pub mod client;
-pub mod database;
 pub mod gmp_types;
+pub mod models;
 pub mod server;
 pub mod utils;
 
 pub use client::Client;
-pub use database::PostgresDB;
+pub use models::tasks::TasksModel;
 pub use server::Server;
