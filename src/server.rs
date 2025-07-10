@@ -85,62 +85,7 @@ async fn post_events(
     for (index, event) in events_request.events.iter().enumerate() {
         println!("Event {}: {:?}", index, event);
 
-        let (event_id, event_type, timestamp) = match event {
-            Event::Call { common, .. } => (
-                &common.event_id,
-                &common.r#type,
-                common
-                    .meta
-                    .as_ref()
-                    .map(|m| m.timestamp.as_str())
-                    .unwrap_or("unknown"),
-            ),
-            Event::GasRefunded { common, .. } => (
-                &common.event_id,
-                &common.r#type,
-                common
-                    .meta
-                    .as_ref()
-                    .map(|m| m.timestamp.as_str())
-                    .unwrap_or("unknown"),
-            ),
-            Event::GasCredit { common, .. } => (
-                &common.event_id,
-                &common.r#type,
-                common
-                    .meta
-                    .as_ref()
-                    .map(|m| m.timestamp.as_str())
-                    .unwrap_or("unknown"),
-            ),
-            Event::MessageExecuted { common, .. } => (
-                &common.event_id,
-                &common.r#type,
-                common
-                    .meta
-                    .as_ref()
-                    .map(|m| m.common_meta.timestamp.as_str())
-                    .unwrap_or("unknown"),
-            ),
-            Event::CannotExecuteMessageV2 { common, .. } => (
-                &common.event_id,
-                &common.r#type,
-                common
-                    .meta
-                    .as_ref()
-                    .map(|m| m.timestamp.as_str())
-                    .unwrap_or("unknown"),
-            ),
-            Event::ITSInterchainTransfer { common, .. } => (
-                &common.event_id,
-                &common.r#type,
-                common
-                    .meta
-                    .as_ref()
-                    .map(|m| m.timestamp.as_str())
-                    .unwrap_or("unknown"),
-            ),
-        };
+        let (event_id, event_type, timestamp) = event.common_fields();
 
         let event_json = match serde_json::to_string(event) {
             Ok(json) => json,

@@ -447,6 +447,29 @@ pub enum Event {
     },
 }
 
+impl Event {
+    pub fn common_fields(&self) -> (&str, &str, &str) {
+        fn unwrap_ts<T>(opt: &Option<T>, f: impl Fn(&T) -> &str) -> &str {
+            opt.as_ref().map(|t| f(t)).unwrap_or("unknown")
+        }
+
+        match self {
+            Event::Call { common, .. }
+            | Event::GasRefunded { common, .. }
+            | Event::GasCredit { common, .. }
+            | Event::CannotExecuteMessageV2 { common, .. }
+            | Event::ITSInterchainTransfer { common, .. } => {
+                let ts = unwrap_ts(&common.meta, |m| &m.timestamp);
+                (&common.event_id, &common.r#type, ts)
+            }
+            Event::MessageExecuted { common, .. } => {
+                let ts = unwrap_ts(&common.meta, |m| &m.common_meta.timestamp);
+                (&common.event_id, &common.r#type, ts)
+            }
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct PostEventResult {
     pub status: String,
