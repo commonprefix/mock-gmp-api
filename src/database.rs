@@ -16,62 +16,55 @@ impl PostgresDB {
         Ok(Self { pool })
     }
 
-    pub async fn get_tasks(&self) -> Result<Vec<Task>, anyhow::Error> {
-        let query = "SELECT id, chain, timestamp, type, meta, task FROM tasks";
-        let rows = sqlx::query(query).fetch_all(&self.pool).await?;
+    // pub async fn get_tasks(&self) -> Result<Vec<serde_json::Value>, anyhow::Error> {
+    //     let query = "SELECT id, chain, timestamp, type, meta, task FROM tasks";
+    //     let rows = sqlx::query(query).fetch_all(&self.pool).await?;
 
-        Ok(rows
-            .iter()
-            .filter_map(|row| {
-                let id: String = row.get("id");
-                let chain: String = row.get("chain");
-                let timestamp: String = row.get("timestamp");
-                let task_kind: TaskKind = row.get("type");
-                let meta: Option<String> = row.get("meta");
-                let task_text: String = row.get("task");
+    //     Ok(rows
+    //         .iter()
+    //         .filter_map(|row| {
+    //             let id: String = row.get("id");
+    //             let chain: String = row.get("chain");
+    //             let timestamp: String = row.get("timestamp");
+    //             let task_kind: TaskKind = row.get("type");
+    //             let meta: Option<String> = row.get("meta");
+    //             let task_text: String = row.get("task");
 
-                let task_type = match task_kind {
-                    TaskKind::Verify => "VERIFY",
-                    TaskKind::Execute => "EXECUTE",
-                    TaskKind::GatewayTx => "GATEWAY_TX",
-                    TaskKind::ConstructProof => "CONSTRUCT_PROOF",
-                    TaskKind::ReactToWasmEvent => "REACT_TO_WASM_EVENT",
-                    TaskKind::Refund => "REFUND",
-                    TaskKind::ReactToExpiredSigningSession => "REACT_TO_EXPIRED_SIGNING_SESSION",
-                    TaskKind::ReactToRetriablePoll => "REACT_TO_RETRIABLE_POLL",
-                    TaskKind::Unknown => "UNKNOWN",
-                };
+    //             let task_type = match task_kind {
+    //                 TaskKind::Verify => "VERIFY",
+    //                 TaskKind::Execute => "EXECUTE",
+    //                 TaskKind::GatewayTx => "GATEWAY_TX",
+    //                 TaskKind::ConstructProof => "CONSTRUCT_PROOF",
+    //                 TaskKind::ReactToWasmEvent => "REACT_TO_WASM_EVENT",
+    //                 TaskKind::Refund => "REFUND",
+    //                 TaskKind::ReactToExpiredSigningSession => "REACT_TO_EXPIRED_SIGNING_SESSION",
+    //                 TaskKind::ReactToRetriablePoll => "REACT_TO_RETRIABLE_POLL",
+    //                 TaskKind::Unknown => "UNKNOWN",
+    //             };
 
-                let task_fields: serde_json::Value = match serde_json::from_str(&task_text) {
-                    Ok(value) => value,
-                    Err(e) => {
-                        println!("Failed to parse task fields: {:?}", e);
-                        return None;
-                    }
-                };
+    //             let task_fields: serde_json::Value = match serde_json::from_str(&task_text) {
+    //                 Ok(value) => value,
+    //                 Err(e) => {
+    //                     println!("Failed to parse task fields: {:?}", e);
+    //                     return None;
+    //                 }
+    //             };
 
-                let meta_value: Option<serde_json::Value> =
-                    meta.and_then(|m| serde_json::from_str(&m).ok());
+    //             let meta_value: Option<serde_json::Value> =
+    //                 meta.and_then(|m| serde_json::from_str(&m).ok());
 
-                let complete_task_json = serde_json::json!({
-                    "id": id,
-                    "chain": chain,
-                    "timestamp": timestamp,
-                    "type": task_type,
-                    "meta": meta_value,
-                    "task": task_fields
-                });
-
-                match parse_task(&complete_task_json) {
-                    Ok(task) => Some(task),
-                    Err(e) => {
-                        println!("Failed to parse complete task: {:?}", e);
-                        None
-                    }
-                }
-            })
-            .collect::<Vec<_>>())
-    }
+    //             serde_json::json!({
+    //                 "id": id,
+    //                 "chain": chain,
+    //                 "timestamp": timestamp,
+    //                 "type": task_type,
+    //                 "meta": meta_value,
+    //                 "task": task_fields
+    //             })
+    //         })
+    //         .filter(|v| !v.is_null()) // Filter out failed parses
+    //         .collect::<Vec<_>>())
+    // }
 
     pub async fn find(&self, id: &str) -> Result<Option<Task>, anyhow::Error> {
         let query = "SELECT id, chain, timestamp, type, meta, task FROM tasks WHERE id = $1";
@@ -162,6 +155,57 @@ impl PostgresDB {
 
         Ok(())
     }
+
+    pub async fn get_tasks(&self) -> Result<Vec<serde_json::Value>, anyhow::Error> {
+        let query = "SELECT id, chain, timestamp, type, meta, task FROM tasks";
+        let rows = sqlx::query(query).fetch_all(&self.pool).await?;
+
+        Ok(rows
+            .iter()
+            .map(|row| {
+                let id: String = row.get("id");
+                let chain: String = row.get("chain");
+                let timestamp: String = row.get("timestamp");
+                let task_kind: TaskKind = row.get("type");
+                let meta: Option<String> = row.get("meta");
+                let task_text: String = row.get("task");
+
+                let task_type = match task_kind {
+                    TaskKind::Verify => "VERIFY",
+                    TaskKind::Execute => "EXECUTE",
+                    TaskKind::GatewayTx => "GATEWAY_TX",
+                    TaskKind::ConstructProof => "CONSTRUCT_PROOF",
+                    TaskKind::ReactToWasmEvent => "REACT_TO_WASM_EVENT",
+                    TaskKind::Refund => "REFUND",
+                    TaskKind::ReactToExpiredSigningSession => "REACT_TO_EXPIRED_SIGNING_SESSION",
+                    TaskKind::ReactToRetriablePoll => "REACT_TO_RETRIABLE_POLL",
+                    TaskKind::Unknown => "UNKNOWN",
+                };
+
+                let task_fields: serde_json::Value = match serde_json::from_str(&task_text) {
+                    Ok(value) => value,
+                    Err(e) => {
+                        println!("Failed to parse task fields: {:?}", e);
+                        return serde_json::Value::Null;
+                    }
+                };
+
+                let meta_value: Option<serde_json::Value> =
+                    meta.and_then(|m| serde_json::from_str(&m).ok());
+
+                // Return the raw JSON structure that get_tasks_action expects
+                serde_json::json!({
+                    "id": id,
+                    "chain": chain,
+                    "timestamp": timestamp,
+                    "type": task_type,
+                    "meta": meta_value,
+                    "task": task_fields
+                })
+            })
+            .filter(|v| !v.is_null()) // Filter out failed parses
+            .collect::<Vec<_>>())
+    }
 }
 
 #[cfg(test)]
@@ -219,10 +263,11 @@ mod tests {
         )
         .await
         .unwrap();
-        let tasks = db.get_tasks().await.unwrap();
-        assert_eq!(tasks.len(), 1);
+        let raw_tasks = db.get_tasks().await.unwrap();
+        assert_eq!(raw_tasks.len(), 1);
 
-        let task = match &tasks[0] {
+        let task = crate::utils::parse_task(&raw_tasks[0]).unwrap();
+        let task = match &task {
             Task::Verify(verify_task) => verify_task,
             _ => panic!("Expected VerifyTask, got different task type"),
         };
@@ -250,10 +295,11 @@ mod tests {
         )
         .await
         .unwrap();
-        let tasks = db.get_tasks().await.unwrap();
-        assert_eq!(tasks.len(), 2);
+        let raw_tasks = db.get_tasks().await.unwrap();
+        assert_eq!(raw_tasks.len(), 2);
 
-        let task = match &tasks[1] {
+        let task = crate::utils::parse_task(&raw_tasks[1]).unwrap();
+        let task = match &task {
             Task::Execute(execute_task) => execute_task,
             _ => panic!("Expected ExecuteTask, got different task type"),
         };
@@ -283,10 +329,11 @@ mod tests {
         .await
         .unwrap();
 
-        let tasks = db.get_tasks().await.unwrap();
-        assert_eq!(tasks.len(), 3);
+        let raw_tasks = db.get_tasks().await.unwrap();
+        assert_eq!(raw_tasks.len(), 3);
 
-        let task = match &tasks[2] {
+        let task = crate::utils::parse_task(&raw_tasks[2]).unwrap();
+        let task = match &task {
             Task::GatewayTx(gateway_tx_task) => gateway_tx_task,
             _ => panic!("Expected GatewayTxTask, got different task type"),
         };

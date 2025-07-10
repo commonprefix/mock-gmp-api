@@ -1,0 +1,19 @@
+[
+  {
+    "type": "GAS_CREDIT",
+    "eventID": "0xe168dcf7f0e7ce7c4676a71ee21abd2e8a78a5c6ac49706cc99a884d2000de54-gas",
+    "meta": {
+      "txID": "0xe168dcf7f0e7ce7c4676a71ee21abd2e8a78a5c6ac49706cc99a884d2000de54",
+      "fromAddress": null,
+      "finalized": null,
+      "sourceContext": null,
+      "timestamp": "2025-07-10T12:18:42Z"
+    },
+    "messageID": "0xe168dcf7f0e7ce7c4676a71ee21abd2e8a78a5c6ac49706cc99a884d2000de54",
+    "refundAddress": "rB9Y8qCjWamxfdxBs2g4h2e4RNVkvQd3WD",
+    "payment": {
+      "tokenID": null,
+      "amount": "1700000"
+    }
+  }
+]

@@ -1,8 +1,14 @@
 use actix_web::{App, Error, HttpResponse, HttpServer, error, get, post, web};
 use futures::StreamExt;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 
-use crate::{PostgresDB, gmp_types::Task, utils::parse_task};
+use crate::{
+    PostgresDB,
+    gmp_types::{Event, PostEventResponse, PostEventResult, Task},
+    utils::parse_task,
+};
 
 pub struct Server {
     pub port: u16,
@@ -11,6 +17,11 @@ pub struct Server {
 }
 
 const MAX_SIZE: usize = 262_144; // max payload size is 256k
+
+#[derive(Serialize, Deserialize, Debug)]
+struct EventsRequest {
+    events: Vec<Event>,
+}
 
 #[post("/{address}/broadcast")]
 async fn address_broadcast(
@@ -31,8 +42,11 @@ async fn address_broadcast(
     Ok(HttpResponse::Ok().json(obj))
 }
 
-#[post("/events")]
-async fn events(mut payload: web::Payload) -> Result<HttpResponse, Error> {
+#[post("/chains/{chain}/events")]
+async fn events(
+    chain: web::Path<String>,
+    mut payload: web::Payload,
+) -> Result<HttpResponse, Error> {
     let mut body = web::BytesMut::new();
     while let Some(chunk) = payload.next().await {
         let chunk = chunk?;
@@ -42,9 +56,35 @@ async fn events(mut payload: web::Payload) -> Result<HttpResponse, Error> {
         body.extend_from_slice(&chunk);
     }
 
-    let obj = serde_json::from_slice::<Value>(&body)?;
-    println!("obj: {:?}", obj);
-    Ok(HttpResponse::Ok().json(obj))
+    let events_request: EventsRequest = serde_json::from_slice(&body)
+        .map_err(|e| error::ErrorBadRequest(format!("Invalid JSON: {}", e)))?;
+
+    println!(
+        "Received {} events for chain: {}",
+        events_request.events.len(),
+        chain
+    );
+    for (i, event) in events_request.events.iter().enumerate() {
+        println!("Event {}: {:?}", i, event);
+    }
+
+    // Mock processing - create a successful result for each event
+    let results: Vec<PostEventResult> = events_request
+        .events
+        .iter()
+        .enumerate()
+        .map(|(index, _event)| PostEventResult {
+            status: "success".to_string(),
+            index,
+            error: None,
+            retriable: None,
+        })
+        .collect();
+
+    let response = PostEventResponse { results };
+
+    println!("Responding with: {:?}", response);
+    Ok(HttpResponse::Ok().json(response))
 }
 
 #[post("/task")]
@@ -58,10 +98,10 @@ async fn task(db: web::Data<PostgresDB>, mut payload: web::Payload) -> Result<Ht
         body.extend_from_slice(&chunk);
     }
 
-    let maybe_json_task = serde_json::from_slice::<Value>(&body)?;
-    let task = parse_task(&maybe_json_task).map_err(|e| error::ErrorBadRequest(e.to_string()))?;
+    let json_value = serde_json::from_slice::<Value>(&body)?;
+    let task = parse_task(&json_value).map_err(|e| error::ErrorBadRequest(e.to_string()))?;
 
-    let task_json = maybe_json_task.get("task").unwrap();
+    let task_json = json_value.get("task").unwrap();
 
     // without the macro t could not be different Task types
     macro_rules! get_common {
@@ -102,17 +142,26 @@ async fn task(db: web::Data<PostgresDB>, mut payload: web::Payload) -> Result<Ht
 
 // attempting to mock call in relayer :  format!("{}/chains/{}/tasks", self.rpc_url, self.chain); in get_tasks
 #[get("/chains/{chain}/tasks")]
-async fn tasks(db: web::Data<PostgresDB>) -> Result<HttpResponse, Error> {
-    let tasks = db
+async fn tasks(
+    db: web::Data<PostgresDB>,
+    query: web::Query<HashMap<String, String>>,
+) -> Result<HttpResponse, Error> {
+    let after = query.get("after");
+    if let Some(after_value) = after {
+        println!("Requesting tasks after: {}", after_value);
+        // TODO: Implement filtering by 'after' parameter in database query
+    }
+
+    let raw_tasks = db
         .get_tasks()
         .await
         .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
 
     let response = serde_json::json!({
-        "tasks": tasks
+        "tasks": raw_tasks
     });
 
-    println!("tasks: {:?}", response);
+    println!("Returning {} tasks", raw_tasks.len());
 
     Ok(HttpResponse::Ok().json(response))
 }
