@@ -1,4 +1,5 @@
 use reqwest;
+use serde_json::Value;
 use std::error::Error;
 
 pub struct Client {
@@ -30,5 +31,12 @@ impl Client {
             println!("{}", error_msg);
             Err(error_msg.into())
         }
+    }
+
+    pub async fn post_task(&self, task: Value) -> Result<String, anyhow::Error> {
+        let url = format!("{}/task", self.base_url);
+        let response = self.client.post(&url).json(&task).send().await?;
+
+        Ok(response.text().await?)
     }
 }

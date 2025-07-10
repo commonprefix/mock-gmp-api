@@ -141,11 +141,9 @@ impl PostgresDB {
         meta: Option<&str>,
         task: Option<&str>,
     ) -> Result<(), anyhow::Error> {
-        let query = format!(
-            "INSERT INTO tasks (id, chain, timestamp, type, meta, task) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO UPDATE SET chain = $2, timestamp = $3, type = $4, meta = $5, task = $6 RETURNING *"
-        );
+        let query = "INSERT INTO tasks (id, chain, timestamp, type, meta, task) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO UPDATE SET chain = $2, timestamp = $3, type = $4, meta = $5, task = $6 RETURNING *";
 
-        sqlx::query(&query)
+        sqlx::query(query)
             .bind(id)
             .bind(chain)
             .bind(timestamp)
@@ -159,8 +157,8 @@ impl PostgresDB {
     }
 
     pub async fn delete(&self, id: &str) -> Result<(), anyhow::Error> {
-        let query = format!("DELETE FROM tasks WHERE id = $1");
-        sqlx::query(&query).bind(id).execute(&self.pool).await?;
+        let query = "DELETE FROM tasks WHERE id = $1";
+        sqlx::query(query).bind(id).execute(&self.pool).await?;
 
         Ok(())
     }

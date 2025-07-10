@@ -1,8 +1,8 @@
 use actix_web::{App, Error, HttpResponse, HttpServer, error, get, post, web};
 use futures::StreamExt;
-use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
-use crate::PostgresDB;
+use crate::{PostgresDB, gmp_types::Task, utils::parse_task};
 
 pub struct Server {
     pub port: u16,
@@ -11,12 +11,6 @@ pub struct Server {
 }
 
 const MAX_SIZE: usize = 262_144; // max payload size is 256k
-
-#[derive(Serialize, Deserialize, Debug)]
-struct MyObj {
-    name: String,
-    number: i32,
-}
 
 #[post("/{address}/broadcast")]
 async fn address_broadcast(
@@ -32,7 +26,7 @@ async fn address_broadcast(
         body.extend_from_slice(&chunk);
     }
 
-    let obj = serde_json::from_slice::<MyObj>(&body)?;
+    let obj = serde_json::from_slice::<Value>(&body)?;
     println!("obj: {:?} to address: {}", obj, address);
     Ok(HttpResponse::Ok().json(obj))
 }
@@ -48,9 +42,62 @@ async fn events(mut payload: web::Payload) -> Result<HttpResponse, Error> {
         body.extend_from_slice(&chunk);
     }
 
-    let obj = serde_json::from_slice::<MyObj>(&body)?;
+    let obj = serde_json::from_slice::<Value>(&body)?;
     println!("obj: {:?}", obj);
     Ok(HttpResponse::Ok().json(obj))
+}
+
+#[post("/task")]
+async fn task(db: web::Data<PostgresDB>, mut payload: web::Payload) -> Result<HttpResponse, Error> {
+    let mut body = web::BytesMut::new();
+    while let Some(chunk) = payload.next().await {
+        let chunk = chunk?;
+        if (body.len() + chunk.len()) > MAX_SIZE {
+            return Err(error::ErrorBadRequest("overflow"));
+        }
+        body.extend_from_slice(&chunk);
+    }
+
+    let maybe_json_task = serde_json::from_slice::<Value>(&body)?;
+    let task = parse_task(&maybe_json_task).map_err(|e| error::ErrorBadRequest(e.to_string()))?;
+
+    let task_json = maybe_json_task.get("task").unwrap();
+
+    // without the macro t could not be different Task types
+    macro_rules! get_common {
+        ($t:expr) => {
+            (&$t.common.chain, &$t.common.timestamp, &$t.common.meta)
+        };
+    }
+
+    let (chain, timestamp, meta) = match &task {
+        Task::Verify(t) => get_common!(t),
+        Task::Execute(t) => get_common!(t),
+        Task::GatewayTx(t) => get_common!(t),
+        Task::ConstructProof(t) => get_common!(t),
+        Task::ReactToWasmEvent(t) => get_common!(t),
+        Task::Refund(t) => get_common!(t),
+        Task::ReactToExpiredSigningSession(t) => get_common!(t),
+        Task::ReactToRetriablePoll(t) => get_common!(t),
+        Task::Unknown(_) => return Err(error::ErrorBadRequest("Cannot store unknown tasks")),
+    };
+
+    db.upsert(
+        &task.id(),
+        chain,
+        timestamp,
+        task.kind(),
+        meta.as_ref()
+            .map(|m| serde_json::to_string(m).unwrap())
+            .as_deref(),
+        Some(&serde_json::to_string(task_json).unwrap()),
+    )
+    .await
+    .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
+
+    println!("task upserted: {:?}", task.id());
+
+    Ok(HttpResponse::Ok().json(task))
 }
 
 // attempting to mock call in relayer :  format!("{}/chains/{}/tasks", self.rpc_url, self.chain); in get_tasks
@@ -64,6 +111,8 @@ async fn tasks(db: web::Data<PostgresDB>) -> Result<HttpResponse, Error> {
     let response = serde_json::json!({
         "tasks": tasks
     });
+
+    println!("tasks: {:?}", response);
 
     Ok(HttpResponse::Ok().json(response))
 }
@@ -80,6 +129,7 @@ impl Server {
             App::new()
                 .app_data(web::Data::new(self.db.clone()))
                 .service(tasks)
+                .service(task)
                 .service(address_broadcast)
                 .service(events)
         })
