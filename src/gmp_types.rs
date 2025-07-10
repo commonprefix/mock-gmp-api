@@ -222,16 +222,26 @@ pub enum Task {
     Unknown(UnknownTask),
 }
 
-#[derive(Clone, Eq, PartialEq, Hash)]
+#[derive(Clone, Eq, PartialEq, Hash, sqlx::Type, Debug)]
+#[sqlx(type_name = "task_type")]
 pub enum TaskKind {
+    #[sqlx(rename = "VERIFY")]
     Verify,
+    #[sqlx(rename = "EXECUTE")]
     Execute,
+    #[sqlx(rename = "GATEWAY_TX")]
     GatewayTx,
+    #[sqlx(rename = "CONSTRUCT_PROOF")]
     ConstructProof,
+    #[sqlx(rename = "REACT_TO_WASM_EVENT")]
     ReactToWasmEvent,
+    #[sqlx(rename = "REFUND")]
     Refund,
+    #[sqlx(rename = "REACT_TO_EXPIRED_SIGNING_SESSION")]
     ReactToExpiredSigningSession,
+    #[sqlx(rename = "REACT_TO_RETRIABLE_POLL")]
     ReactToRetriablePoll,
+    #[sqlx(rename = "UNKNOWN")]
     Unknown,
 }
 
