@@ -34,7 +34,7 @@ impl Client {
     }
 
     pub async fn post_task(&self, task: Value) -> Result<String, anyhow::Error> {
-        let url = format!("{}/task", self.base_url);
+        let url = format!("{}/chains/xrpl/task", self.base_url);
         let response = self.client.post(&url).json(&task).send().await?;
 
         Ok(response.text().await?)

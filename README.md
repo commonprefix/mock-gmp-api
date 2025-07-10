@@ -12,6 +12,7 @@ To run the client : `cargo run --bin client`
 
 ## Server Endpoints:
 
-GET /tasks  
-POST /events  
+GET /chain/\<chain_name\>/tasks  
+POST /chain/\<chain_name\>/task   
+POST /chain/\<chain_name\>/events    
 POST /\<address\>/broadacast  

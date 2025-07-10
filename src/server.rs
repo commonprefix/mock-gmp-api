@@ -189,7 +189,7 @@ async fn events(
     Ok(HttpResponse::Ok().json(response))
 }
 
-#[post("/task")]
+#[post("/chains/{chain}/task")]
 async fn task(db: web::Data<TasksModel>, mut payload: web::Payload) -> Result<HttpResponse, Error> {
     let mut body = web::BytesMut::new();
     while let Some(chunk) = payload.next().await {
