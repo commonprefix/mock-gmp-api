@@ -275,17 +275,17 @@ impl Task {
         }
     }
 
-    pub fn common_fields(&self) -> (&str, &str) {
+    pub fn common(&self) -> &CommonTaskFields {
         match self {
-            Task::Execute(t) => (&t.common.chain, &t.common.timestamp),
-            Task::Verify(t) => (&t.common.chain, &t.common.timestamp),
-            Task::GatewayTx(t) => (&t.common.chain, &t.common.timestamp),
-            Task::ConstructProof(t) => (&t.common.chain, &t.common.timestamp),
-            Task::ReactToWasmEvent(t) => (&t.common.chain, &t.common.timestamp),
-            Task::Refund(t) => (&t.common.chain, &t.common.timestamp),
-            Task::ReactToExpiredSigningSession(t) => (&t.common.chain, &t.common.timestamp),
-            Task::ReactToRetriablePoll(t) => (&t.common.chain, &t.common.timestamp),
-            Task::Unknown(t) => (&t.common.chain, &t.common.timestamp),
+            Task::Execute(t) => &t.common,
+            Task::Verify(t) => &t.common,
+            Task::GatewayTx(t) => &t.common,
+            Task::ConstructProof(t) => &t.common,
+            Task::ReactToWasmEvent(t) => &t.common,
+            Task::Refund(t) => &t.common,
+            Task::ReactToExpiredSigningSession(t) => &t.common,
+            Task::ReactToRetriablePoll(t) => &t.common,
+            Task::Unknown(t) => &t.common,
         }
     }
 }

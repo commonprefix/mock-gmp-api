@@ -74,5 +74,7 @@ async fn main() -> Result<(), anyhow::Error> {
         Err(e) => println!("Error: {}", e),
     }
 
+    println!("Succesfully performed all calls");
+
     Ok(())
 }

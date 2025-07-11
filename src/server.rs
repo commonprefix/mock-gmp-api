@@ -155,12 +155,12 @@ async fn post_task(
         return Err(error::ErrorBadRequest("Cannot store unknown tasks"));
     }
 
-    let (chain, timestamp) = task.common_fields();
+    let common = task.common();
 
     db.upsert(
-        &task.id(),
-        chain,
-        timestamp,
+        &common.id,
+        &common.chain,
+        &common.timestamp,
         task.kind(),
         Some(&serde_json::to_string(&json_value).unwrap()),
     )
