@@ -2,13 +2,15 @@
   {
     "type": "CALL",
     "eventID": "0xe168dcf7f0e7ce7c4676a71ee21abd2e8a78a5c6ac49706cc99a884d2000de54-call",
-    "txID": "0xe168dcf7f0e7ce7c4676a71ee21abd2e8a78a5c6ac49706cc99a884d2000de54",
-    "fromAddress": null,
-    "finalized": null,
-    "sourceContext": {
-      "xrpl_message": "{\"interchain_transfer_message\":{\"tx_id\":\"e168dcf7f0e7ce7c4676a71ee21abd2e8a78a5c6ac49706cc99a884d2000de54\",\"source_address\":\"rB9Y8qCjWamxfdxBs2g4h2e4RNVkvQd3WD\",\"destination_chain\":\"xrpl-evm\",\"destination_address\":\"48f7C7cF01B5D8983d96a1311f4F76Dad7311Ca1\",\"payload_hash\":null,\"transfer_amount\":{\"drops\":7300000},\"gas_fee_amount\":{\"drops\":1700000}}}"
+    "meta": {
+      "txID": "0xe168dcf7f0e7ce7c4676a71ee21abd2e8a78a5c6ac49706cc99a884d2000de54",
+      "fromAddress": null,
+      "finalized": null,
+      "sourceContext": {
+        "xrpl_message": "{\"interchain_transfer_message\":{\"tx_id\":\"e168dcf7f0e7ce7c4676a71ee21abd2e8a78a5c6ac49706cc99a884d2000de54\",\"source_address\":\"rB9Y8qCjWamxfdxBs2g4h2e4RNVkvQd3WD\",\"destination_chain\":\"xrpl-evm\",\"destination_address\":\"48f7C7cF01B5D8983d96a1311f4F76Dad7311Ca1\",\"payload_hash\":null,\"transfer_amount\":{\"drops\":7300000},\"gas_fee_amount\":{\"drops\":1700000}}}"
+      },
+      "timestamp": "2025-07-10T12:18:42Z"
     },
-    "timestamp": "2025-07-10T12:18:42Z",
     "message": {
       "messageID": "0xe168dcf7f0e7ce7c4676a71ee21abd2e8a78a5c6ac49706cc99a884d2000de54",
       "sourceChain": "xrpl",

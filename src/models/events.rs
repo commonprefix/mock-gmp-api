@@ -1,5 +1,6 @@
 use crate::gmp_types::Event;
 use crate::gmp_types::EventType;
+use chrono::{DateTime, Utc};
 use serde_json;
 use sqlx::{PgPool, Row};
 use tracing::error;
@@ -43,7 +44,7 @@ impl EventsModel {
     pub async fn upsert(
         &self,
         id: &str,
-        timestamp: &str,
+        timestamp: DateTime<Utc>,
         event_type: EventType,
         event: &str,
     ) -> Result<(), anyhow::Error> {
@@ -94,6 +95,7 @@ impl EventsModel {
 #[cfg(test)]
 mod tests {
 
+    use chrono::{DateTime, Utc};
     use testcontainers::{ContainerAsync, runners::AsyncRunner};
     use testcontainers_modules::postgres;
 
@@ -134,24 +136,15 @@ mod tests {
         let call_events: Vec<Event> = serde_json::from_str(&call_events_json).unwrap();
 
         for call_event in call_events {
-            let call_event_id = match &call_event {
-                Event::Call { common, .. } => &common.event_id,
-                _ => panic!("Expected Call event"),
-            };
-            let call_timestamp = match &call_event {
-                Event::Call { common, .. } => {
-                    if let Some(meta) = &common.meta {
-                        &meta.timestamp
-                    } else {
-                        "timestamp" // fallback 
-                    }
-                }
-                _ => panic!("Expected Call event"),
-            };
+            let (event_id, _event_type, timestamp_str) = call_event.common_fields();
+
+            let timestamp = timestamp_str
+                .parse::<DateTime<Utc>>()
+                .expect("Failed to parse timestamp");
 
             db.upsert(
-                call_event_id,
-                call_timestamp,
+                event_id,
+                timestamp,
                 EventType::Call,
                 &serde_json::to_string(&call_event).unwrap(),
             )
@@ -167,24 +160,15 @@ mod tests {
         let gas_credit_events: Vec<Event> = serde_json::from_str(&gas_credit_events_json).unwrap();
 
         for gas_credit_event in gas_credit_events {
-            let gas_credit_event_id = match &gas_credit_event {
-                Event::GasCredit { common, .. } => &common.event_id,
-                _ => panic!("Expected GasCredit event"),
-            };
-            let gas_credit_timestamp = match &gas_credit_event {
-                Event::GasCredit { common, .. } => {
-                    if let Some(meta) = &common.meta {
-                        &meta.timestamp
-                    } else {
-                        "timestamp" // fallback timestamp
-                    }
-                }
-                _ => panic!("Expected GasCredit event"),
-            };
+            let (event_id, _event_type, timestamp_str) = gas_credit_event.common_fields();
+
+            let timestamp = timestamp_str
+                .parse::<DateTime<Utc>>()
+                .expect("Failed to parse timestamp");
 
             db.upsert(
-                gas_credit_event_id,
-                gas_credit_timestamp,
+                event_id,
+                timestamp,
                 EventType::GasCredit,
                 &serde_json::to_string(&gas_credit_event).unwrap(),
             )

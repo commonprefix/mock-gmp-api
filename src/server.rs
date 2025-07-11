@@ -1,4 +1,5 @@
 use actix_web::{App, Error, HttpResponse, HttpServer, error, get, post, web};
+use chrono::{DateTime, Utc};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -86,6 +87,8 @@ async fn post_events(
     for (index, event) in events_request.events.iter().enumerate() {
         debug!("Event {}: {:?}", index, event);
 
+        // helper get message id and put in the db
+
         let (event_id, event_type, timestamp) = event.common_fields();
 
         let event_json = match serde_json::to_string(event) {
@@ -101,10 +104,23 @@ async fn post_events(
             }
         };
 
+        let parsed_timestamp = match timestamp.parse::<DateTime<Utc>>() {
+            Ok(ts) => ts,
+            Err(e) => {
+                results.push(PostEventResult {
+                    status: "error".to_string(),
+                    index,
+                    error: Some(format!("Invalid timestamp format: {}", e)),
+                    retriable: Some(true),
+                });
+                continue;
+            }
+        };
+
         match events_db
             .upsert(
                 event_id,
-                timestamp,
+                parsed_timestamp,
                 string_to_event_type(event_type),
                 &event_json,
             )
@@ -158,10 +174,15 @@ async fn post_task(
 
     let common = task.common();
 
+    let timestamp = common
+        .timestamp
+        .parse::<DateTime<Utc>>()
+        .map_err(|e| error::ErrorBadRequest(format!("Invalid timestamp format: {}", e)))?;
+
     db.upsert(
         &common.id,
         &common.chain,
-        &common.timestamp,
+        timestamp,
         task.kind(),
         Some(&serde_json::to_string(&json_value).unwrap()),
     )

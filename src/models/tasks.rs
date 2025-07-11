@@ -2,6 +2,7 @@ use crate::{
     gmp_types::{Task, TaskKind},
     utils::parse_task,
 };
+use chrono::{DateTime, Utc};
 use serde_json;
 use sqlx::{PgPool, Row};
 use tracing::error;
@@ -53,7 +54,7 @@ impl TasksModel {
         &self,
         id: &str,
         chain: &str,
-        timestamp: &str,
+        timestamp: DateTime<Utc>,
         task_type: TaskKind,
         task: Option<&str>,
     ) -> Result<(), anyhow::Error> {
@@ -105,6 +106,7 @@ impl TasksModel {
 #[cfg(test)]
 mod tests {
 
+    use chrono::{DateTime, Utc};
     use testcontainers::{ContainerAsync, runners::AsyncRunner};
     use testcontainers_modules::postgres;
 
@@ -155,10 +157,16 @@ mod tests {
                 "task": valid_verify_task.task
             });
 
+            let timestamp = valid_verify_task
+                .common
+                .timestamp
+                .parse::<DateTime<Utc>>()
+                .expect("Failed to parse timestamp");
+
             db.upsert(
                 valid_verify_task.common.id.as_str(),
                 valid_verify_task.common.chain.as_str(),
-                valid_verify_task.common.timestamp.as_str(),
+                timestamp,
                 TaskKind::Verify,
                 Some(&serde_json::to_string(&complete_task_json).unwrap()),
             )
@@ -185,10 +193,16 @@ mod tests {
                 "task": valid_execute_task.task
             });
 
+            let timestamp = valid_execute_task
+                .common
+                .timestamp
+                .parse::<DateTime<Utc>>()
+                .expect("Failed to parse timestamp");
+
             db.upsert(
                 valid_execute_task.common.id.as_str(),
                 valid_execute_task.common.chain.as_str(),
-                valid_execute_task.common.timestamp.as_str(),
+                timestamp,
                 TaskKind::Execute,
                 Some(&serde_json::to_string(&complete_execute_task_json).unwrap()),
             )
@@ -216,10 +230,16 @@ mod tests {
                 "task": valid_gateway_tx_task.task
             });
 
+            let timestamp = valid_gateway_tx_task
+                .common
+                .timestamp
+                .parse::<DateTime<Utc>>()
+                .expect("Failed to parse timestamp");
+
             db.upsert(
                 valid_gateway_tx_task.common.id.as_str(),
                 valid_gateway_tx_task.common.chain.as_str(),
-                valid_gateway_tx_task.common.timestamp.as_str(),
+                timestamp,
                 TaskKind::GatewayTx,
                 Some(&serde_json::to_string(&complete_gateway_tx_task_json).unwrap()),
             )
