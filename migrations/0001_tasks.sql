@@ -3,7 +3,7 @@ CREATE TYPE task_type as ENUM ('VERIFY', 'EXECUTE', 'GATEWAY_TX', 'CONSTRUCT_PRO
 CREATE TABLE IF NOT EXISTS tasks (
     id TEXT NOT NULL PRIMARY KEY,
     chain TEXT NOT NULL,
-    timestamp TIMESTAMPTZ NOT NULL, -- todo : down migration, make it timestamptz
+    timestamp TIMESTAMPTZ NOT NULL,
     type task_type NOT NULL,
     task TEXT NOT NULL DEFAULT '{}'
 )

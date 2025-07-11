@@ -66,17 +66,17 @@ async fn main() -> Result<(), anyhow::Error> {
     });
 
     match client.post_task(task).await {
-        Ok(response) => info!("Success: {}", response),
+        Ok(_response) => info!("Success for post_task"),
         Err(e) => error!("Error: {}", e),
     }
 
     match client.get_tasks().await {
-        Ok(response) => info!("Success: {}", response),
+        Ok(_response) => info!("Success for get_tasks"),
         Err(e) => error!("Error: {}", e),
     }
 
     match client.post_events(events).await {
-        Ok(response) => info!("Success: {}", response),
+        Ok(_response) => info!("Success for post_events"),
         Err(e) => error!("Error: {}", e),
     }
 

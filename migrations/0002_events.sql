@@ -2,7 +2,7 @@ CREATE TYPE event_type as ENUM ('CALL', 'GAS_REFUNDED', 'GAS_CREDIT', 'MESSAGE_E
 
 CREATE TABLE IF NOT EXISTS events (
     id TEXT NOT NULL PRIMARY KEY,
-    timestamp TIMESTAMPTZ NOT NULL, -- todo : down migration, make it timestamptz
+    timestamp TIMESTAMPTZ NOT NULL,
     type event_type NOT NULL,
     event TEXT NOT NULL
 );
