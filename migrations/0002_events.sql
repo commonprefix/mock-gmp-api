@@ -4,5 +4,6 @@ CREATE TABLE IF NOT EXISTS events (
     id TEXT NOT NULL PRIMARY KEY,
     timestamp TIMESTAMPTZ NOT NULL,
     type event_type NOT NULL,
+    message_id TEXT NOT NULL,
     event TEXT NOT NULL
 );

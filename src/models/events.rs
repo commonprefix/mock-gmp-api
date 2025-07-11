@@ -47,9 +47,10 @@ impl EventsModel {
         timestamp: DateTime<Utc>,
         event_type: EventType,
         event: &str,
+        message_id: &str,
     ) -> Result<(), anyhow::Error> {
         let query = format!(
-            "INSERT INTO {} (id, timestamp, type, event) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO UPDATE SET timestamp = $2, type = $3, event = $4",
+            "INSERT INTO {} (id, timestamp, type, event, message_id) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO UPDATE SET timestamp = $2, type = $3, event = $4, message_id = $5",
             PG_TABLE_NAME
         );
 
@@ -58,6 +59,7 @@ impl EventsModel {
             .bind(timestamp)
             .bind(event_type)
             .bind(event)
+            .bind(message_id)
             .execute(&self.pool)
             .await?;
 
@@ -137,6 +139,7 @@ mod tests {
 
         for call_event in call_events {
             let (event_id, _event_type, timestamp_str) = call_event.common_fields();
+            let message_id = call_event.message_id();
 
             let timestamp = timestamp_str
                 .parse::<DateTime<Utc>>()
@@ -147,6 +150,7 @@ mod tests {
                 timestamp,
                 EventType::Call,
                 &serde_json::to_string(&call_event).unwrap(),
+                &message_id,
             )
             .await
             .unwrap();
@@ -161,7 +165,7 @@ mod tests {
 
         for gas_credit_event in gas_credit_events {
             let (event_id, _event_type, timestamp_str) = gas_credit_event.common_fields();
-
+            let message_id = gas_credit_event.message_id();
             let timestamp = timestamp_str
                 .parse::<DateTime<Utc>>()
                 .expect("Failed to parse timestamp");
@@ -171,6 +175,7 @@ mod tests {
                 timestamp,
                 EventType::GasCredit,
                 &serde_json::to_string(&gas_credit_event).unwrap(),
+                &message_id,
             )
             .await
             .unwrap();

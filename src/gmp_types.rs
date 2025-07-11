@@ -482,6 +482,17 @@ impl Event {
             }
         }
     }
+
+    pub fn message_id(&self) -> String {
+        match self {
+            Event::Call { message, .. } => message.message_id.clone(),
+            Event::GasRefunded { message_id, .. } => message_id.clone(),
+            Event::GasCredit { message_id, .. } => message_id.clone(),
+            Event::MessageExecuted { message_id, .. } => message_id.clone(),
+            Event::CannotExecuteMessageV2 { message_id, .. } => message_id.clone(),
+            Event::ITSInterchainTransfer { message_id, .. } => message_id.clone(),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]

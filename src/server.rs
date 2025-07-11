@@ -87,9 +87,8 @@ async fn post_events(
     for (index, event) in events_request.events.iter().enumerate() {
         debug!("Event {}: {:?}", index, event);
 
-        // helper get message id and put in the db
-
         let (event_id, event_type, timestamp) = event.common_fields();
+        let message_id = event.message_id();
 
         let event_json = match serde_json::to_string(event) {
             Ok(json) => json,
@@ -123,6 +122,7 @@ async fn post_events(
                 parsed_timestamp,
                 string_to_event_type(event_type),
                 &event_json,
+                &message_id,
             )
             .await
         {
