@@ -274,6 +274,20 @@ impl Task {
             Unknown(_) => TaskKind::Unknown,
         }
     }
+
+    pub fn common_fields(&self) -> (&str, &str) {
+        match self {
+            Task::Execute(t) => (&t.common.chain, &t.common.timestamp),
+            Task::Verify(t) => (&t.common.chain, &t.common.timestamp),
+            Task::GatewayTx(t) => (&t.common.chain, &t.common.timestamp),
+            Task::ConstructProof(t) => (&t.common.chain, &t.common.timestamp),
+            Task::ReactToWasmEvent(t) => (&t.common.chain, &t.common.timestamp),
+            Task::Refund(t) => (&t.common.chain, &t.common.timestamp),
+            Task::ReactToExpiredSigningSession(t) => (&t.common.chain, &t.common.timestamp),
+            Task::ReactToRetriablePoll(t) => (&t.common.chain, &t.common.timestamp),
+            Task::Unknown(t) => (&t.common.chain, &t.common.timestamp),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

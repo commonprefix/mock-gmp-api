@@ -15,4 +15,4 @@ To run the client : `cargo run --bin client`
 GET /chain/\<chain_name\>/tasks  
 POST /chain/\<chain_name\>/task   
 POST /chain/\<chain_name\>/events    
-POST /\<address\>/broadacast  
+POST /contracts/\<contract_address\>/broadacast  

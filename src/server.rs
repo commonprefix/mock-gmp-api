@@ -37,7 +37,7 @@ fn string_to_event_type(event_type: &str) -> EventType {
     }
 }
 
-#[post("/{address}/broadcast")]
+#[post("/contracts/{contract_address}/broadcast")]
 async fn address_broadcast(
     address: web::Path<String>,
     mut payload: web::Payload,
@@ -155,24 +155,7 @@ async fn post_task(
         return Err(error::ErrorBadRequest("Cannot store unknown tasks"));
     }
 
-    // without the macro t could not be different Task types
-    macro_rules! get_common {
-        ($t:expr) => {
-            (&$t.common.chain, &$t.common.timestamp)
-        };
-    }
-
-    let (chain, timestamp) = match &task {
-        Task::Verify(t) => get_common!(t),
-        Task::Execute(t) => get_common!(t),
-        Task::GatewayTx(t) => get_common!(t),
-        Task::ConstructProof(t) => get_common!(t),
-        Task::ReactToWasmEvent(t) => get_common!(t),
-        Task::Refund(t) => get_common!(t),
-        Task::ReactToExpiredSigningSession(t) => get_common!(t),
-        Task::ReactToRetriablePoll(t) => get_common!(t),
-        Task::Unknown(_) => unreachable!("Unknown tasks are handled above"),
-    };
+    let (chain, timestamp) = task.common_fields();
 
     db.upsert(
         &task.id(),
