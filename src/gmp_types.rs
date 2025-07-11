@@ -464,7 +464,7 @@ pub enum Event {
 impl Event {
     pub fn common_fields(&self) -> (&str, &str, &str) {
         fn unwrap_ts<T>(opt: &Option<T>, f: impl Fn(&T) -> &str) -> &str {
-            opt.as_ref().map(|t| f(t)).unwrap_or("unknown")
+            opt.as_ref().map(f).unwrap_or("unknown")
         }
 
         match self {
