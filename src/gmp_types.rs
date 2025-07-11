@@ -18,6 +18,12 @@ pub struct GatewayV2Message {
     pub payload_hash: String,
 }
 
+impl GatewayV2Message {
+    pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(json)
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct Amount {
     #[serde(rename = "tokenID")]

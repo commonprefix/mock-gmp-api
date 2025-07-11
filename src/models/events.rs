@@ -28,7 +28,6 @@ impl EventsModel {
         let event = row.and_then(|row| {
             let event_text: String = row.get("event");
 
-            // Parse the complete event JSON directly
             match serde_json::from_str(&event_text) {
                 Ok(event) => Some(event),
                 Err(e) => {
@@ -39,6 +38,31 @@ impl EventsModel {
         });
 
         Ok(event)
+    }
+
+    pub async fn insert(
+        &self,
+        id: &str,
+        timestamp: DateTime<Utc>,
+        event_type: EventType,
+        event: &str,
+        message_id: &str,
+    ) -> Result<(), anyhow::Error> {
+        let query = format!(
+            "INSERT INTO {} (id, timestamp, type, event, message_id) VALUES ($1, $2, $3, $4, $5)",
+            PG_TABLE_NAME
+        );
+
+        sqlx::query(&query)
+            .bind(id)
+            .bind(timestamp)
+            .bind(event_type)
+            .bind(event)
+            .bind(message_id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
     }
 
     pub async fn upsert(
@@ -91,6 +115,30 @@ impl EventsModel {
                 }
             })
             .collect::<Vec<_>>())
+    }
+
+    pub async fn find_by_message_id(
+        &self,
+        message_id: &str,
+    ) -> Result<Option<Event>, anyhow::Error> {
+        let query = format!("SELECT event FROM {} WHERE message_id = $1", PG_TABLE_NAME);
+        let row = sqlx::query(&query)
+            .bind(message_id)
+            .fetch_optional(&self.pool)
+            .await?;
+        let event = row.and_then(|row| {
+            let event_text: String = row.get("event");
+
+            match serde_json::from_str(&event_text) {
+                Ok(event) => Some(event),
+                Err(e) => {
+                    error!("Failed to parse event JSON: {:?}", e);
+                    None
+                }
+            }
+        });
+
+        Ok(event)
     }
 }
 

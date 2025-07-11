@@ -4,11 +4,15 @@ use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 use crate::{
     TasksModel,
-    gmp_types::{Event, EventType, PostEventResponse, PostEventResult, Task},
+    gmp_types::{
+        CommonTaskFields, Event, EventType, PostEventResponse, PostEventResult, Task, TaskMetadata,
+        VerifyTask, VerifyTaskFields,
+    },
     models::events::EventsModel,
     utils::parse_task,
 };
@@ -43,6 +47,7 @@ fn string_to_event_type(event_type: &str) -> EventType {
 async fn address_broadcast(
     address: web::Path<String>,
     mut payload: web::Payload,
+    _chain: web::Path<String>,
 ) -> Result<HttpResponse, Error> {
     let mut body = web::BytesMut::new();
     while let Some(chunk) = payload.next().await {
@@ -90,8 +95,24 @@ async fn post_events(
         let (event_id, event_type, timestamp) = event.common_fields();
         let message_id = event.message_id();
 
-        let event_json = match serde_json::to_string(event) {
-            Ok(json) => json,
+        // Check that no other event with the same ID exists
+        let maybe_event_with_same_id = events_db
+            .find(event_id)
+            .await
+            .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
+        if maybe_event_with_same_id.is_some() {
+            results.push(PostEventResult {
+                status: "ACCEPTED".to_string(),
+                index,
+                error: None,
+                retriable: None,
+            });
+            warn!("Event with same ID already exists: {:?}", event);
+            continue;
+        }
+
+        let event_json_str = match serde_json::to_string(event) {
+            Ok(json_str) => json_str,
             Err(e) => {
                 results.push(PostEventResult {
                     status: "error".to_string(),
@@ -116,12 +137,151 @@ async fn post_events(
             }
         };
 
+        let maybe_corresponding_event = events_db
+            .find_by_message_id(&message_id)
+            .await
+            .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
+        if let Some(corresponding_event) = maybe_corresponding_event {
+            let (_, corresponding_event_type, _) = corresponding_event.common_fields();
+            // Check that no event exists with same message ID and type
+            if corresponding_event_type == event_type {
+                results.push(PostEventResult {
+                    status: "ACCEPTED".to_string(),
+                    index,
+                    error: None,
+                    retriable: None,
+                });
+                warn!(
+                    "Event with same message ID and type already exists: {:?}",
+                    event
+                );
+                continue;
+            }
+            // Check if both events arrived in order to create VERIFY task
+            if corresponding_event_type == "CALL" && event_type == "GAS_CREDIT"
+                || corresponding_event_type == "GAS_CREDIT" && event_type == "CALL"
+            {
+                // TODO: Refactor GMP Types for Events to be similar to Tasks enums
+                let (gas_credit_event, call_event) = if corresponding_event_type == "GAS_CREDIT" {
+                    (corresponding_event, event.clone())
+                } else {
+                    (event.clone(), corresponding_event)
+                };
+                debug!("Gas credit event: {:?}", gas_credit_event);
+                debug!("Call event: {:?}", call_event);
+
+                // attempt to not use json round-trip
+                let (message, payload, meta) = match &call_event {
+                    Event::Call {
+                        message,
+                        payload,
+                        common,
+                        ..
+                    } => (message, payload, &common.meta),
+                    _ => {
+                        return Err(error::ErrorInternalServerError(
+                            "Expected Call event".to_string(),
+                        ));
+                    }
+                };
+
+                //  TODO: As is, an event with a different ID but same message ID will
+                //  trigger a second VerifyTask creation. There needs to be a check to avoid that
+
+                let task = Task::Verify(VerifyTask {
+                    common: CommonTaskFields {
+                        id: Uuid::new_v4().to_string(),
+                        chain: chain.clone(),
+                        timestamp: Utc::now().to_rfc3339(),
+                        r#type: "VERIFY".to_string(),
+                        meta: meta.as_ref().map(|event_meta| TaskMetadata {
+                            tx_id: event_meta.tx_id.clone(),
+                            from_address: event_meta.from_address.clone(),
+                            finalized: event_meta.finalized,
+                            source_context: event_meta.source_context.clone(),
+                            scoped_messages: None,
+                        }),
+                    },
+                    task: VerifyTaskFields {
+                        message: message.clone(),
+                        payload: payload.clone(),
+                    },
+                });
+
+                // let call_event_json_str = serde_json::to_string(&call_event).unwrap();
+                // let call_event_json = serde_json::from_str::<Value>(&call_event_json_str).unwrap();
+                // let call_event_message = call_event_json.get("message");
+                // let call_event_payload = call_event_json.get("payload");
+                // // TODO: is there a better way for this? Event meta and Task meta differ in one field
+                // let call_event_meta = call_event_json.get("meta");
+                // let call_event_meta_tx_id = call_event_meta.and_then(|meta| meta.get("txID"));
+                // let call_event_meta_from_address =
+                //     call_event_meta.and_then(|meta| meta.get("fromAddress"));
+                // let call_event_meta_finalized =
+                //     call_event_meta.and_then(|meta| meta.get("finalized"));
+                // let call_event_meta_source_context =
+                //     call_event_meta.and_then(|meta| meta.get("sourceContext"));
+
+                // // Create VERIFY task
+                // let task = Task::Verify(VerifyTask {
+                //     common: CommonTaskFields {
+                //         id: Uuid::new_v4().to_string(),
+                //         chain: chain.clone(),
+                //         timestamp: Utc::now().to_rfc3339(),
+                //         r#type: "VERIFY".to_string(),
+                //         meta: Some(TaskMetadata {
+                //             tx_id: call_event_meta_tx_id.and_then(|v| {
+                //                 if v.is_null() {
+                //                     None
+                //                 } else {
+                //                     v.as_str().map(|s| s.to_string())
+                //                 }
+                //             }),
+                //             from_address: call_event_meta_from_address.and_then(|v| {
+                //                 if v.is_null() {
+                //                     None
+                //                 } else {
+                //                     v.as_str().map(|s| s.to_string())
+                //                 }
+                //             }),
+                //             finalized: call_event_meta_finalized
+                //                 .and_then(|v| if v.is_null() { None } else { v.as_bool() }),
+                //             source_context: call_event_meta_source_context.and_then(|v| {
+                //                 if v.is_null() {
+                //                     None
+                //                 } else {
+                //                     serde_json::from_value::<HashMap<String, String>>(v.clone())
+                //                         .ok()
+                //                 }
+                //             }),
+                //             scoped_messages: None,
+                //         }),
+                //     },
+                //     task: VerifyTaskFields {
+                //         message: serde_json::from_value(call_event_message.unwrap().clone())
+                //             .map_err(|e| {
+                //                 error::ErrorInternalServerError(format!(
+                //                     "Failed to parse message: {}",
+                //                     e
+                //                 ))
+                //             })?,
+                //         payload: call_event_payload.unwrap().as_str().unwrap().to_string(),
+                //     },
+                // });
+
+                info!("Created VERIFY task: {:?}", task);
+
+                // TODO: POST VERIFY task so that distributor can pick it up
+            }
+        }
+
+        // insert instead of upsert because we check that ID does not exist already
         match events_db
-            .upsert(
+            .insert(
                 event_id,
                 parsed_timestamp,
                 string_to_event_type(event_type),
-                &event_json,
+                &event_json_str,
                 &message_id,
             )
             .await

@@ -16,7 +16,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let task = serde_json::json!(
     {
-      "id": "0197a679-9cf6-785c-8666-a2cf0c84c984",
+      "id": "2297a679-9cf6-785c-8666-a2cf0c84c984",
       "chain": "xrpl",
       "timestamp": "2025-06-25T09:44:37.366743Z",
       "type": "GATEWAY_TX",
@@ -42,7 +42,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
         {
           "type": "CALL",
-          "eventID": "0xe168dcf7f0e7ce7c4676a71ee21abd2e8a78a5c6ac49706cc99a884d2000de54-call",
+          "eventID": "0xd168dcf7f0e7ce7c4676a71ee21abd2e8a78a5c6ac49706cc99a884d2000de54-call",
           "meta": {
             "txID": "0xe168dcf7f0e7ce7c4676a71ee21abd2e8a78a5c6ac49706cc99a884d2000de54",
             "fromAddress": null,
@@ -61,6 +61,23 @@ async fn main() -> Result<(), anyhow::Error> {
           },
           "destinationChain": "axelar",
           "payload": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAh4cnBsLWV2bQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAC6WiHKiO9ruiv/9QiJlPkOEHfiocw9zDi9Jh8A/OKCTwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAASAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAG9joAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACJyQjlZOHFDaldhbXhmZHhCczJnNGgyZTRSTlZrdlFkM1dEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABRI98fPAbXYmD2WoTEfT3ba1zEcoQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        },
+        {
+          "type": "GAS_CREDIT",
+          "eventID": "0xf168dcf7f0e7ce7c4676a71ee21abd2e8a78a5c6ac49706cc99a884d2000de54-gas",
+          "meta": {
+            "txID": "0xe168dcf7f0e7ce7c4676a71ee21abd2e8a78a5c6ac49706cc99a884d2000de54",
+            "fromAddress": null,
+            "finalized": null,
+            "sourceContext": null,
+            "timestamp": "2025-07-10T12:18:42Z"
+          },
+          "messageID": "0xe168dcf7f0e7ce7c4676a71ee21abd2e8a78a5c6ac49706cc99a884d2000de54",
+          "refundAddress": "rB9Y8qCjWamxfdxBs2g4h2e4RNVkvQd3WD",
+          "payment": {
+            "tokenID": null,
+            "amount": "1700000"
+          }
         }
       ]
     });
