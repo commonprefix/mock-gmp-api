@@ -135,114 +135,130 @@ mod tests {
     #[tokio::test]
     async fn test_upsert_and_get_tasks() {
         let (db, _container) = setup_test_container().await;
+        let mut expected_tasks = Vec::new();
+        let mut task_count = 0;
+
+        // Test all VerifyTasks
         let valid_verify_tasks_dir = "testdata/xrpl_tasks/valid_tasks/VerifyTask.json";
         let valid_verify_tasks_json = std::fs::read_to_string(valid_verify_tasks_dir).unwrap();
         let valid_verify_tasks: Vec<VerifyTask> =
             serde_json::from_str(&valid_verify_tasks_json).unwrap();
-        let valid_verify_task = valid_verify_tasks[1].clone();
 
-        // Create complete task JSON as the server would store it
-        let complete_task_json = serde_json::json!({
-            "id": valid_verify_task.common.id,
-            "chain": valid_verify_task.common.chain,
-            "timestamp": valid_verify_task.common.timestamp,
-            "type": "VERIFY",
-            "meta": valid_verify_task.common.meta,
-            "task": valid_verify_task.task
-        });
+        for valid_verify_task in valid_verify_tasks {
+            let complete_task_json = serde_json::json!({
+                "id": valid_verify_task.common.id,
+                "chain": valid_verify_task.common.chain,
+                "timestamp": valid_verify_task.common.timestamp,
+                "type": "VERIFY",
+                "meta": valid_verify_task.common.meta,
+                "task": valid_verify_task.task
+            });
 
-        db.upsert(
-            valid_verify_task.common.id.as_str(),
-            valid_verify_task.common.chain.as_str(),
-            valid_verify_task.common.timestamp.as_str(),
-            TaskKind::Verify,
-            Some(&serde_json::to_string(&complete_task_json).unwrap()),
-        )
-        .await
-        .unwrap();
-        let raw_tasks = db.get_tasks().await.unwrap();
-        assert_eq!(raw_tasks.len(), 1);
+            db.upsert(
+                valid_verify_task.common.id.as_str(),
+                valid_verify_task.common.chain.as_str(),
+                valid_verify_task.common.timestamp.as_str(),
+                TaskKind::Verify,
+                Some(&serde_json::to_string(&complete_task_json).unwrap()),
+            )
+            .await
+            .unwrap();
 
-        let task = crate::utils::parse_task(&raw_tasks[0]).unwrap();
-        let task = match &task {
-            Task::Verify(verify_task) => verify_task,
-            _ => panic!("Expected VerifyTask, got different task type"),
-        };
+            expected_tasks.push(Task::Verify(valid_verify_task));
+            task_count += 1;
+        }
 
-        assert_eq!(task, &valid_verify_task);
-
+        // Test all ExecuteTasks
         let valid_execute_tasks_dir = "testdata/xrpl_tasks/valid_tasks/ExecuteTask.json";
         let valid_execute_tasks_json = std::fs::read_to_string(valid_execute_tasks_dir).unwrap();
         let valid_execute_tasks: Vec<ExecuteTask> =
             serde_json::from_str(&valid_execute_tasks_json).unwrap();
-        let valid_execute_task = valid_execute_tasks[0].clone();
 
-        // Create complete task JSON as the server would store it
-        let complete_execute_task_json = serde_json::json!({
-            "id": valid_execute_task.common.id,
-            "chain": valid_execute_task.common.chain,
-            "timestamp": valid_execute_task.common.timestamp,
-            "type": "EXECUTE",
-            "meta": valid_execute_task.common.meta,
-            "task": valid_execute_task.task
-        });
+        for valid_execute_task in valid_execute_tasks {
+            let complete_execute_task_json = serde_json::json!({
+                "id": valid_execute_task.common.id,
+                "chain": valid_execute_task.common.chain,
+                "timestamp": valid_execute_task.common.timestamp,
+                "type": "EXECUTE",
+                "meta": valid_execute_task.common.meta,
+                "task": valid_execute_task.task
+            });
 
-        db.upsert(
-            valid_execute_task.common.id.as_str(),
-            valid_execute_task.common.chain.as_str(),
-            valid_execute_task.common.timestamp.as_str(),
-            TaskKind::Execute,
-            Some(&serde_json::to_string(&complete_execute_task_json).unwrap()),
-        )
-        .await
-        .unwrap();
-        let raw_tasks = db.get_tasks().await.unwrap();
-        assert_eq!(raw_tasks.len(), 2);
+            db.upsert(
+                valid_execute_task.common.id.as_str(),
+                valid_execute_task.common.chain.as_str(),
+                valid_execute_task.common.timestamp.as_str(),
+                TaskKind::Execute,
+                Some(&serde_json::to_string(&complete_execute_task_json).unwrap()),
+            )
+            .await
+            .unwrap();
 
-        let task = crate::utils::parse_task(&raw_tasks[1]).unwrap();
-        let task = match &task {
-            Task::Execute(execute_task) => execute_task,
-            _ => panic!("Expected ExecuteTask, got different task type"),
-        };
+            expected_tasks.push(Task::Execute(valid_execute_task));
+            task_count += 1;
+        }
 
-        assert_eq!(task, &valid_execute_task);
-
+        // Test all GatewayTxTasks
         let valid_gateway_tx_tasks_dir = "testdata/xrpl_tasks/valid_tasks/GatewayTxTask.json";
         let valid_gateway_tx_tasks_json =
             std::fs::read_to_string(valid_gateway_tx_tasks_dir).unwrap();
         let valid_gateway_tx_tasks: Vec<GatewayTxTask> =
             serde_json::from_str(&valid_gateway_tx_tasks_json).unwrap();
-        let valid_gateway_tx_task = valid_gateway_tx_tasks[1].clone();
 
-        // Create complete task JSON as the server would store it
-        let complete_gateway_tx_task_json = serde_json::json!({
-            "id": valid_gateway_tx_task.common.id,
-            "chain": valid_gateway_tx_task.common.chain,
-            "timestamp": valid_gateway_tx_task.common.timestamp,
-            "type": "GATEWAY_TX",
-            "meta": valid_gateway_tx_task.common.meta,
-            "task": valid_gateway_tx_task.task
-        });
+        for valid_gateway_tx_task in valid_gateway_tx_tasks {
+            let complete_gateway_tx_task_json = serde_json::json!({
+                "id": valid_gateway_tx_task.common.id,
+                "chain": valid_gateway_tx_task.common.chain,
+                "timestamp": valid_gateway_tx_task.common.timestamp,
+                "type": "GATEWAY_TX",
+                "meta": valid_gateway_tx_task.common.meta,
+                "task": valid_gateway_tx_task.task
+            });
 
-        db.upsert(
-            valid_gateway_tx_task.common.id.as_str(),
-            valid_gateway_tx_task.common.chain.as_str(),
-            valid_gateway_tx_task.common.timestamp.as_str(),
-            TaskKind::GatewayTx,
-            Some(&serde_json::to_string(&complete_gateway_tx_task_json).unwrap()),
-        )
-        .await
-        .unwrap();
+            db.upsert(
+                valid_gateway_tx_task.common.id.as_str(),
+                valid_gateway_tx_task.common.chain.as_str(),
+                valid_gateway_tx_task.common.timestamp.as_str(),
+                TaskKind::GatewayTx,
+                Some(&serde_json::to_string(&complete_gateway_tx_task_json).unwrap()),
+            )
+            .await
+            .unwrap();
+
+            expected_tasks.push(Task::GatewayTx(valid_gateway_tx_task));
+            task_count += 1;
+        }
 
         let raw_tasks = db.get_tasks().await.unwrap();
-        assert_eq!(raw_tasks.len(), 3);
+        assert_eq!(raw_tasks.len(), task_count);
 
-        let task = crate::utils::parse_task(&raw_tasks[2]).unwrap();
-        let task = match &task {
-            Task::GatewayTx(gateway_tx_task) => gateway_tx_task,
-            _ => panic!("Expected GatewayTxTask, got different task type"),
-        };
+        let parsed_tasks: Vec<Task> = raw_tasks
+            .iter()
+            .map(|task_json| crate::utils::parse_task(task_json).unwrap())
+            .collect();
 
-        assert_eq!(task, &valid_gateway_tx_task);
+        let expected_task_ids: std::collections::HashSet<String> =
+            expected_tasks.iter().map(|task| task.id()).collect();
+
+        let parsed_task_ids: std::collections::HashSet<String> =
+            parsed_tasks.iter().map(|task| task.id()).collect();
+
+        assert_eq!(expected_task_ids, parsed_task_ids, "Task IDs should match");
+
+        for expected_task in &expected_tasks {
+            let found = parsed_tasks
+                .iter()
+                .any(|parsed_task| match (expected_task, parsed_task) {
+                    (Task::Verify(expected), Task::Verify(parsed)) => expected == parsed,
+                    (Task::Execute(expected), Task::Execute(parsed)) => expected == parsed,
+                    (Task::GatewayTx(expected), Task::GatewayTx(parsed)) => expected == parsed,
+                    _ => false,
+                });
+            assert!(
+                found,
+                "Expected task not found in parsed tasks: {:?}",
+                expected_task.id()
+            );
+        }
     }
 }

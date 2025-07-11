@@ -125,83 +125,98 @@ mod tests {
     async fn test_upsert_and_get_events() {
         let (db, _container) = setup_test_container().await;
 
-        // Test CallEvent
+        let mut expected_events = Vec::new();
+
+        // Test all CallEvents
         let call_events_dir = "testdata/events/CallEvent.json";
         let call_events_json = std::fs::read_to_string(call_events_dir).unwrap();
         let call_events: Vec<Event> = serde_json::from_str(&call_events_json).unwrap();
-        let call_event = call_events[0].clone();
 
-        let call_event_id = match &call_event {
-            Event::Call { common, .. } => &common.event_id,
-            _ => panic!("Expected Call event"),
-        };
-        let call_timestamp = match &call_event {
-            Event::Call { common, .. } => {
-                if let Some(meta) = &common.meta {
-                    &meta.timestamp
-                } else {
-                    "timestamp" // fallback 
+        for call_event in call_events {
+            let call_event_id = match &call_event {
+                Event::Call { common, .. } => &common.event_id,
+                _ => panic!("Expected Call event"),
+            };
+            let call_timestamp = match &call_event {
+                Event::Call { common, .. } => {
+                    if let Some(meta) = &common.meta {
+                        &meta.timestamp
+                    } else {
+                        "timestamp" // fallback 
+                    }
                 }
-            }
-            _ => panic!("Expected Call event"),
-        };
+                _ => panic!("Expected Call event"),
+            };
 
-        db.upsert(
-            call_event_id,
-            call_timestamp,
-            EventType::Call,
-            &serde_json::to_string(&call_event).unwrap(),
-        )
-        .await
-        .unwrap();
+            db.upsert(
+                call_event_id,
+                call_timestamp,
+                EventType::Call,
+                &serde_json::to_string(&call_event).unwrap(),
+            )
+            .await
+            .unwrap();
 
-        // Test GasCreditEvent
+            expected_events.push(call_event);
+        }
+
+        // Test all GasCreditEvents
         let gas_credit_events_dir = "testdata/events/GasCreditEvent.json";
         let gas_credit_events_json = std::fs::read_to_string(gas_credit_events_dir).unwrap();
         let gas_credit_events: Vec<Event> = serde_json::from_str(&gas_credit_events_json).unwrap();
-        let gas_credit_event = gas_credit_events[0].clone();
 
-        let gas_credit_event_id = match &gas_credit_event {
-            Event::GasCredit { common, .. } => &common.event_id,
-            _ => panic!("Expected GasCredit event"),
-        };
-        let gas_credit_timestamp = match &gas_credit_event {
-            Event::GasCredit { common, .. } => {
-                if let Some(meta) = &common.meta {
-                    &meta.timestamp
-                } else {
-                    "timestamp" // fallback timestamp
+        for gas_credit_event in gas_credit_events {
+            let gas_credit_event_id = match &gas_credit_event {
+                Event::GasCredit { common, .. } => &common.event_id,
+                _ => panic!("Expected GasCredit event"),
+            };
+            let gas_credit_timestamp = match &gas_credit_event {
+                Event::GasCredit { common, .. } => {
+                    if let Some(meta) = &common.meta {
+                        &meta.timestamp
+                    } else {
+                        "timestamp" // fallback timestamp
+                    }
                 }
-            }
-            _ => panic!("Expected GasCredit event"),
-        };
+                _ => panic!("Expected GasCredit event"),
+            };
 
-        db.upsert(
-            gas_credit_event_id,
-            gas_credit_timestamp,
-            EventType::GasCredit,
-            &serde_json::to_string(&gas_credit_event).unwrap(),
-        )
-        .await
-        .unwrap();
+            db.upsert(
+                gas_credit_event_id,
+                gas_credit_timestamp,
+                EventType::GasCredit,
+                &serde_json::to_string(&gas_credit_event).unwrap(),
+            )
+            .await
+            .unwrap();
+
+            expected_events.push(gas_credit_event);
+        }
 
         let raw_events = db.get_events().await.unwrap();
-        assert_eq!(raw_events.len(), 2);
+        assert_eq!(raw_events.len(), expected_events.len());
 
         let parsed_events: Vec<Event> = raw_events
             .iter()
             .map(|event_json| serde_json::from_value(event_json.clone()).unwrap())
             .collect();
 
-        let call_event_json = serde_json::to_string(&call_event).unwrap();
-        let gas_credit_event_json = serde_json::to_string(&gas_credit_event).unwrap();
+        let expected_event_jsons: Vec<String> = expected_events
+            .iter()
+            .map(|event| serde_json::to_string(event).unwrap())
+            .collect();
 
         let parsed_event_jsons: Vec<String> = parsed_events
             .iter()
             .map(|event| serde_json::to_string(event).unwrap())
             .collect();
 
-        assert!(parsed_event_jsons.contains(&call_event_json));
-        assert!(parsed_event_jsons.contains(&gas_credit_event_json));
+        for expected_json in &expected_event_jsons {
+            assert!(
+                parsed_event_jsons.contains(expected_json),
+                "Expected event not found in parsed events: {}",
+                expected_json
+            );
+        }
     }
 }
