@@ -1,8 +1,12 @@
 use mock_gmp_api::Client;
+use mock_gmp_api::utils::setup_logging;
+use tracing::{error, info};
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     dotenv::dotenv().ok();
+    setup_logging();
+
     let server_address = std::env::var("SERVER_ADDRESS").unwrap();
     let server_port = std::env::var("SERVER_PORT")
         .unwrap()
@@ -60,21 +64,21 @@ async fn main() -> Result<(), anyhow::Error> {
     );
 
     match client.post_task(task).await {
-        Ok(response) => println!("Success: {}", response),
-        Err(e) => println!("Error: {}", e),
+        Ok(response) => info!("Success: {}", response),
+        Err(e) => error!("Error: {}", e),
     }
 
     match client.get_tasks().await {
-        Ok(response) => println!("Success: {}", response),
-        Err(e) => println!("Error: {}", e),
+        Ok(response) => info!("Success: {}", response),
+        Err(e) => error!("Error: {}", e),
     }
 
     match client.post_events(events).await {
-        Ok(response) => println!("Success: {}", response),
-        Err(e) => println!("Error: {}", e),
+        Ok(response) => info!("Success: {}", response),
+        Err(e) => error!("Error: {}", e),
     }
 
-    println!("Succesfully performed all calls");
+    info!("Succesfully performed all calls");
 
     Ok(())
 }

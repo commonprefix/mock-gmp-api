@@ -2,6 +2,7 @@ use crate::gmp_types::Event;
 use crate::gmp_types::EventType;
 use serde_json;
 use sqlx::{PgPool, Row};
+use tracing::error;
 
 const PG_TABLE_NAME: &str = "events";
 
@@ -30,7 +31,7 @@ impl EventsModel {
             match serde_json::from_str(&event_text) {
                 Ok(event) => Some(event),
                 Err(e) => {
-                    println!("Failed to parse event JSON: {:?}", e);
+                    error!("Failed to parse event JSON: {:?}", e);
                     None
                 }
             }
@@ -81,7 +82,7 @@ impl EventsModel {
                 match serde_json::from_str(&event_text) {
                     Ok(value) => Some(value),
                     Err(e) => {
-                        println!("Failed to parse event JSON: {:?}", e);
+                        error!("Failed to parse event JSON: {:?}", e);
                         None
                     }
                 }

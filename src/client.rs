@@ -1,6 +1,7 @@
 use reqwest;
 use serde_json::Value;
 use std::error::Error;
+use tracing::{debug, error, info};
 
 pub struct Client {
     pub base_url: String,
@@ -18,17 +19,17 @@ impl Client {
     pub async fn get_tasks(&self) -> Result<String, Box<dyn Error>> {
         let url = format!("{}/chains/xrpl/tasks", self.base_url);
 
-        println!("Making GET request to: {}", url);
+        debug!("Making GET request to: {}", url);
 
         let response = self.client.get(&url).send().await?;
 
         if response.status().is_success() {
             let body = response.text().await?;
-            println!("Response: {}", body);
+            info!("Response: {}", body);
             Ok(body)
         } else {
             let error_msg = format!("Request failed with status: {}", response.status());
-            println!("{}", error_msg);
+            error!("{}", error_msg);
             Err(error_msg.into())
         }
     }

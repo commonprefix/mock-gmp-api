@@ -4,6 +4,7 @@ use crate::{
 };
 use serde_json;
 use sqlx::{PgPool, Row};
+use tracing::error;
 
 const PG_TABLE_NAME: &str = "tasks";
 
@@ -31,7 +32,7 @@ impl TasksModel {
             let task_json: serde_json::Value = match serde_json::from_str(&task_text) {
                 Ok(value) => value,
                 Err(e) => {
-                    println!("Failed to parse task JSON: {:?}", e);
+                    error!("Failed to parse task JSON: {:?}", e);
                     return None;
                 }
             };
@@ -39,7 +40,7 @@ impl TasksModel {
             match parse_task(&task_json) {
                 Ok(task) => Some(task),
                 Err(e) => {
-                    println!("Failed to parse task: {:?}", e);
+                    error!("Failed to parse task: {:?}", e);
                     None
                 }
             }
@@ -92,7 +93,7 @@ impl TasksModel {
                 match serde_json::from_str(&task_text) {
                     Ok(value) => Some(value),
                     Err(e) => {
-                        println!("Failed to parse task JSON: {:?}", e);
+                        error!("Failed to parse task JSON: {:?}", e);
                         None
                     }
                 }

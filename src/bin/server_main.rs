@@ -1,8 +1,11 @@
-use mock_gmp_api::{Server, TasksModel, models::events::EventsModel};
+use mock_gmp_api::{Server, TasksModel, models::events::EventsModel, utils::setup_logging};
+use tracing::error;
 
 #[actix_web::main]
 async fn main() -> anyhow::Result<()> {
     dotenv::dotenv().ok();
+    setup_logging();
+
     let tasks_model = TasksModel::new(&std::env::var("POSTGRES_URL").unwrap()).await?;
     let events_model = EventsModel::new(&std::env::var("POSTGRES_URL").unwrap()).await?;
     let server = Server::new(
@@ -15,7 +18,7 @@ async fn main() -> anyhow::Result<()> {
         events_model,
     );
     if let Err(e) = server.run().await {
-        eprintln!("Error: {}", e);
+        error!("Error: {}", e);
         std::process::exit(1);
     }
     Ok(())

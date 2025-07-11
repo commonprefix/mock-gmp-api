@@ -1,5 +1,7 @@
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use tracing::level_filters::LevelFilter;
+use tracing_subscriber::{Registry, fmt, prelude::*};
 
 use crate::gmp_types::{
     CommonTaskFields, ConstructProofTask, ExecuteTask, GatewayTxTask,
@@ -53,4 +55,15 @@ pub fn parse_task(task_json: &Value) -> Result<Task, anyhow::Error> {
             Ok(Task::Unknown(task))
         }
     }
+}
+
+pub fn setup_logging() {
+    let fmt_layer = fmt::layer()
+        .with_target(true)
+        .with_filter(LevelFilter::DEBUG);
+
+    let gmp_api = Registry::default().with(fmt_layer);
+
+    tracing::subscriber::set_global_default(gmp_api)
+        .expect("Failed to set global tracing subscriber");
 }

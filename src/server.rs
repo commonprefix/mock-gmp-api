@@ -3,6 +3,7 @@ use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use tracing::{debug, info};
 
 use crate::{
     TasksModel,
@@ -52,7 +53,7 @@ async fn address_broadcast(
     }
 
     let obj = serde_json::from_slice::<Value>(&body)?;
-    println!("obj: {:?} to address: {}", obj, address);
+    info!("obj: {:?} to address: {}", obj, address);
     Ok(HttpResponse::Ok().json(obj))
 }
 
@@ -74,7 +75,7 @@ async fn post_events(
     let events_request: EventsRequest = serde_json::from_slice(&body)
         .map_err(|e| error::ErrorBadRequest(format!("Invalid JSON: {}", e)))?;
 
-    println!(
+    debug!(
         "Received {} events for chain: {}",
         events_request.events.len(),
         chain
@@ -83,7 +84,7 @@ async fn post_events(
     let mut results: Vec<PostEventResult> = Vec::new();
 
     for (index, event) in events_request.events.iter().enumerate() {
-        println!("Event {}: {:?}", index, event);
+        debug!("Event {}: {:?}", index, event);
 
         let (event_id, event_type, timestamp) = event.common_fields();
 
@@ -130,7 +131,7 @@ async fn post_events(
 
     let response = PostEventResponse { results };
 
-    println!("Responding with: {:?}", response);
+    info!("Responding with: {:?}", response);
     Ok(HttpResponse::Ok().json(response))
 }
 
@@ -167,7 +168,7 @@ async fn post_task(
     .await
     .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
 
-    println!("task upserted: {:?}", task.id());
+    info!("task upserted: {:?}", task.id());
 
     Ok(HttpResponse::Ok().json(task))
 }
@@ -179,7 +180,7 @@ async fn get_tasks(
 ) -> Result<HttpResponse, Error> {
     let after = query.get("after");
     if let Some(after_value) = after {
-        println!("Requesting tasks after: {}", after_value);
+        debug!("Requesting tasks after: {}", after_value);
         // TODO: Implement filtering by 'after' parameter in database query
     }
 
@@ -192,7 +193,7 @@ async fn get_tasks(
         "tasks": raw_tasks
     });
 
-    println!("Returning {} tasks", raw_tasks.len());
+    info!("Returning {} tasks", raw_tasks.len());
 
     Ok(HttpResponse::Ok().json(response))
 }
