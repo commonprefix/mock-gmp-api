@@ -38,30 +38,32 @@ async fn main() -> Result<(), anyhow::Error> {
     });
 
     let events = serde_json::json!(
-      {  "events": [
-    {
-        "type": "CALL",
-        "eventID": "0xe168dcf7f0e7ce7c4676a71ee21abd2e8a78a5c6ac49706cc99a884d2000de54-call",
-        "txID": "0xe168dcf7f0e7ce7c4676a71ee21abd2e8a78a5c6ac49706cc99a884d2000de54",
-        "fromAddress": null,
-        "finalized": null,
-        "sourceContext": {
-          "xrpl_message": "{\"interchain_transfer_message\":{\"tx_id\":\"e168dcf7f0e7ce7c4676a71ee21abd2e8a78a5c6ac49706cc99a884d2000de54\",\"source_address\":\"rB9Y8qCjWamxfdxBs2g4h2e4RNVkvQd3WD\",\"destination_chain\":\"xrpl-evm\",\"destination_address\":\"48f7C7cF01B5D8983d96a1311f4F76Dad7311Ca1\",\"payload_hash\":null,\"transfer_amount\":{\"drops\":7300000},\"gas_fee_amount\":{\"drops\":1700000}}}"
-        },
-        "timestamp": "2025-07-10T12:18:42Z",
-        "message": {
-          "messageID": "0xe168dcf7f0e7ce7c4676a71ee21abd2e8a78a5c6ac49706cc99a884d2000de54",
-          "sourceChain": "xrpl",
-          "sourceAddress": "rNrjh1KGZk2jBR3wPfAQnoidtFFYQKbQn2",
-          "destinationAddress": "axelar1aqcj54lzz0rk22gvqgcn8fr5tx4rzwdv5wv5j9dmnacgefvd7wzsy2j2mr",
-          "payloadHash": "73940153ab066fd16b1ce5aacffbe6c693b90d2fcd29e5927c0a06cce85f9e27"
-        },
-        "destinationChain": "axelar",
-        "payload": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAh4cnBsLWV2bQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAC6WiHKiO9ruiv/9QiJlPkOEHfiocw9zDi9Jh8A/OKCTwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAASAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAG9joAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACJyQjlZOHFDaldhbXhmZHhCczJnNGgyZTRSTlZrdlFkM1dEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABRI98fPAbXYmD2WoTEfT3ba1zEcoQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-      }
-    ]
-    }
-    );
+        {  "events": [
+
+        {
+          "type": "CALL",
+          "eventID": "0xe168dcf7f0e7ce7c4676a71ee21abd2e8a78a5c6ac49706cc99a884d2000de54-call",
+          "meta": {
+            "txID": "0xe168dcf7f0e7ce7c4676a71ee21abd2e8a78a5c6ac49706cc99a884d2000de54",
+            "fromAddress": null,
+            "finalized": null,
+            "sourceContext": {
+              "xrpl_message": "{\"interchain_transfer_message\":{\"tx_id\":\"e168dcf7f0e7ce7c4676a71ee21abd2e8a78a5c6ac49706cc99a884d2000de54\",\"source_address\":\"rB9Y8qCjWamxfdxBs2g4h2e4RNVkvQd3WD\",\"destination_chain\":\"xrpl-evm\",\"destination_address\":\"48f7C7cF01B5D8983d96a1311f4F76Dad7311Ca1\",\"payload_hash\":null,\"transfer_amount\":{\"drops\":7300000},\"gas_fee_amount\":{\"drops\":1700000}}}"
+            },
+            "timestamp": "2025-07-10T12:18:42Z"
+          },
+          "message": {
+            "messageID": "0xe168dcf7f0e7ce7c4676a71ee21abd2e8a78a5c6ac49706cc99a884d2000de54",
+            "sourceChain": "xrpl",
+            "sourceAddress": "rNrjh1KGZk2jBR3wPfAQnoidtFFYQKbQn2",
+            "destinationAddress": "axelar1aqcj54lzz0rk22gvqgcn8fr5tx4rzwdv5wv5j9dmnacgefvd7wzsy2j2mr",
+            "payloadHash": "73940153ab066fd16b1ce5aacffbe6c693b90d2fcd29e5927c0a06cce85f9e27"
+          },
+          "destinationChain": "axelar",
+          "payload": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAh4cnBsLWV2bQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAC6WiHKiO9ruiv/9QiJlPkOEHfiocw9zDi9Jh8A/OKCTwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAASAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAG9joAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACJyQjlZOHFDaldhbXhmZHhCczJnNGgyZTRSTlZrdlFkM1dEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABRI98fPAbXYmD2WoTEfT3ba1zEcoQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        }
+      ]
+    });
 
     match client.post_task(task).await {
         Ok(response) => info!("Success: {}", response),
