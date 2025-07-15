@@ -5,8 +5,7 @@ use uuid::Uuid;
 use crate::{
     TasksModel,
     gmp_types::{
-        CommonTaskFields, Event, EventType, Task, TaskKind, TaskMetadata, VerifyTask,
-        VerifyTaskFields,
+        CommonTaskFields, Event, EventType, TaskKind, TaskMetadata, VerifyTask, VerifyTaskFields,
     },
     models::events::EventsModel,
 };

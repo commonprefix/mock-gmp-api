@@ -52,6 +52,7 @@ async fn address_broadcast(
 async fn post_events(
     chain: web::Path<String>,
     events_model: web::Data<EventsModel>,
+    tasks_model: web::Data<TasksModel>,
     mut payload: web::Payload,
 ) -> Result<HttpResponse, Error> {
     let mut body = web::BytesMut::new();
@@ -122,9 +123,15 @@ async fn post_events(
         };
 
         if event_type_str == "CALL" || event_type_str == "GAS_CREDIT" {
-            handle_call_or_gas_credit_event(event.clone(), &events_model, &chain, event_type_str)
-                .await
-                .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
+            handle_call_or_gas_credit_event(
+                event.clone(),
+                &events_model,
+                &tasks_model,
+                &chain,
+                event_type_str,
+            )
+            .await
+            .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
         }
 
         // insert instead of upsert because we already checked that ID does not exist
