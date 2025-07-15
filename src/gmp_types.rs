@@ -499,6 +499,17 @@ impl Event {
             Event::ITSInterchainTransfer { message_id, .. } => message_id.clone(),
         }
     }
+
+    pub fn event_type(&self) -> EventType {
+        match self {
+            Event::Call { .. } => EventType::Call,
+            Event::GasRefunded { .. } => EventType::GasRefunded,
+            Event::GasCredit { .. } => EventType::GasCredit,
+            Event::MessageExecuted { .. } => EventType::MessageExecuted,
+            Event::CannotExecuteMessageV2 { .. } => EventType::CannotExecuteMessageV2,
+            Event::ITSInterchainTransfer { .. } => EventType::ITSInterchainTransfer,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]

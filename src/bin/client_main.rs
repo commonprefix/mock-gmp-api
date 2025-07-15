@@ -42,7 +42,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
         {
           "type": "CALL",
-          "eventID": "0xd168dcf7f0e7ce7c4676a71ee21abd2e8a78a5c6ac49706cc99a884d2000de54-call",
+          "eventID": "0xd338dcf7f0e7ce7c4676a71ee21abd2e8a78a5c6ac49706cc99a884d2000de54-call",
           "meta": {
             "txID": "0xe168dcf7f0e7ce7c4676a71ee21abd2e8a78a5c6ac49706cc99a884d2000de54",
             "fromAddress": null,
@@ -64,7 +64,7 @@ async fn main() -> Result<(), anyhow::Error> {
         },
         {
           "type": "GAS_CREDIT",
-          "eventID": "0xf168dcf7f0e7ce7c4676a71ee21abd2e8a78a5c6ac49706cc99a884d2000de54-gas",
+          "eventID": "0xe168dcf7f0e7ce7c4676a71ee21abd2e8a78a5c6ac49706cc99a884d2000de54-gas",
           "meta": {
             "txID": "0xe168dcf7f0e7ce7c4676a71ee21abd2e8a78a5c6ac49706cc99a884d2000de54",
             "fromAddress": null,
@@ -78,6 +78,29 @@ async fn main() -> Result<(), anyhow::Error> {
             "tokenID": null,
             "amount": "1700000"
           }
+        },
+        {
+          "type": "ITS_INTERCHAIN_TRANSFER",
+          "eventID": "0xa123dcf7f0e7ce7c4676a71ee21abd2e8a78a5c6ac49706cc99a884d2000de54-its-transfer",
+          "meta": {
+            "txID": "0xa123dcf7f0e7ce7c4676a71ee21abd2e8a78a5c6ac49706cc99a884d2000de54",
+            "fromAddress": "0xsender123",
+            "finalized": true,
+            "sourceContext": {
+              "transfer_type": "cross_chain",
+              "token_contract": "0x1234567890abcdef1234567890abcdef12345678"
+            },
+            "timestamp": "2025-01-15T10:30:00Z"
+          },
+          "messageID": "0xe168dcf7f0e7ce7c4676a71ee21abd2e8a78a5c6ac49706cc99a884d2000de54",
+          "destinationChain": "ethereum",
+          "tokenSpent": {
+            "tokenID": "USDC",
+            "amount": "1000000000"
+          },
+          "sourceAddress": "0xsender123456789abcdef123456789abcdef12345678",
+          "destinationAddress": "0xrecipient123456789abcdef123456789abcdef123",
+          "dataHash": "0x9876543210fedcba9876543210fedcba9876543210fedcba9876543210fedcba"
         }
       ]
     });

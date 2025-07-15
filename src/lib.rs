@@ -1,4 +1,5 @@
 pub mod client;
+pub mod event_handler;
 pub mod gmp_types;
 pub mod models;
 pub mod server;

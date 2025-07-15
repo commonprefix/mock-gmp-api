@@ -140,6 +140,35 @@ impl EventsModel {
 
         Ok(event)
     }
+
+    pub async fn find_event_by_type_and_message_id(
+        &self,
+        event_type: EventType,
+        message_id: &str,
+    ) -> Result<Option<Event>, anyhow::Error> {
+        let query = format!(
+            "SELECT event FROM {} WHERE type = $1 AND message_id = $2",
+            PG_TABLE_NAME
+        );
+        let row = sqlx::query(&query)
+            .bind(event_type)
+            .bind(message_id)
+            .fetch_optional(&self.pool)
+            .await?;
+        let event = row.and_then(|row| {
+            let event_text: String = row.get("event");
+
+            match serde_json::from_str(&event_text) {
+                Ok(event) => Some(event),
+                Err(e) => {
+                    error!("Failed to parse event JSON: {:?}", e);
+                    None
+                }
+            }
+        });
+
+        Ok(event)
+    }
 }
 
 #[cfg(test)]
