@@ -78,7 +78,6 @@ async fn post_events(
         debug!("Event {}: {:?}", index, event);
 
         let (event_id, event_type_str, timestamp) = event.common_fields();
-        let message_id = event.message_id();
 
         // Check that no other event with the same ID exists
         let maybe_event_with_same_id = events_model
@@ -135,7 +134,7 @@ async fn post_events(
                 parsed_timestamp,
                 event.event_type(),
                 &event_json_str,
-                &message_id,
+                &event.message_id(),
             )
             .await
         {
