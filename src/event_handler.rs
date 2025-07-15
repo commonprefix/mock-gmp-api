@@ -1,10 +1,12 @@
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::{
+    TasksModel,
     gmp_types::{
-        CommonTaskFields, Event, EventType, Task, TaskMetadata, VerifyTask, VerifyTaskFields,
+        CommonTaskFields, Event, EventType, Task, TaskKind, TaskMetadata, VerifyTask,
+        VerifyTaskFields,
     },
     models::events::EventsModel,
 };
@@ -12,6 +14,7 @@ use crate::{
 pub async fn handle_call_or_gas_credit_event(
     event: Event,
     events_model: &EventsModel,
+    tasks_model: &TasksModel,
     chain: &str,
     event_type_str: &str,
 ) -> Result<(), anyhow::Error> {
@@ -64,7 +67,7 @@ pub async fn handle_call_or_gas_credit_event(
                 }
             };
 
-            let task = Task::Verify(VerifyTask {
+            let task = VerifyTask {
                 common: CommonTaskFields {
                     id: Uuid::new_v4().to_string(),
                     chain: chain.to_string(),
@@ -82,11 +85,26 @@ pub async fn handle_call_or_gas_credit_event(
                     message: message.clone(),
                     payload: payload.clone(),
                 },
-            });
+            };
 
-            info!("Created VERIFY task: {:?}", task);
+            let db_write_result = tasks_model
+                .upsert(
+                    &task.common.id,
+                    &task.common.chain,
+                    task.common.timestamp.parse::<DateTime<Utc>>().unwrap(),
+                    TaskKind::Verify,
+                    Some(&serde_json::to_string(&task).unwrap()),
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!(e.to_string()));
 
-            // TODO: POST VERIFY task so that distributor can pick it up
+            if let Err(e) = db_write_result {
+                // TODO: If the task is not written it cannot be retried since the events stay in the database and duplicate check will fail
+                // Maybe here we delete the corresponding events from the DB?
+                warn!("Failed to write VERIFY task to database: {:?}", e);
+            } else {
+                info!("Created VERIFY task: {:?}", task);
+            }
         }
         Ok(())
     }
