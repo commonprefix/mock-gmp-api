@@ -5,12 +5,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 use crate::{
     TasksModel,
     event_handler::handle_call_or_gas_credit_event,
     gmp_types::{Event, PostEventResponse, PostEventResult, Task},
-    models::events::EventsModel,
+    models::{
+        broadcasts::{BroadcastStatus, BroadcastsModel},
+        events::EventsModel,
+    },
     utils::parse_task,
 };
 
@@ -19,6 +23,7 @@ pub struct Server {
     pub address: String,
     pub tasks_model: TasksModel,
     pub events_model: EventsModel,
+    pub broadcasts_model: BroadcastsModel,
 }
 
 const MAX_SIZE: usize = 262_144; // max payload size is 256k
@@ -28,11 +33,34 @@ struct EventsRequest {
     events: Vec<Event>,
 }
 
-#[post("/contracts/{contract_address}/broadcast")]
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(untagged)]
+enum BroadcastRequestType {
+    TicketCreate {
+        #[serde(rename = "TicketCreate")]
+        ticket_create: serde_json::Value,
+    },
+    VerifyMessages {
+        #[serde(rename = "VerifyMessages")]
+        verify_messages: Vec<serde_json::Value>,
+    },
+    RouteIncomingMessages {
+        #[serde(rename = "RouteIncomingMessages")]
+        route_incoming_messages: Vec<serde_json::Value>,
+    },
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct BroadcastResponse {
+    #[serde(rename = "broadcastID")]
+    broadcast_id: String,
+}
+
+#[post("/contracts/{contract_address}/broadcasts")]
 async fn address_broadcast(
-    address: web::Path<String>,
+    contract_address: web::Path<String>,
+    broadcasts_model: web::Data<BroadcastsModel>,
     mut payload: web::Payload,
-    _chain: web::Path<String>,
 ) -> Result<HttpResponse, Error> {
     let mut body = web::BytesMut::new();
     while let Some(chunk) = payload.next().await {
@@ -43,9 +71,56 @@ async fn address_broadcast(
         body.extend_from_slice(&chunk);
     }
 
-    let obj = serde_json::from_slice::<Value>(&body)?;
-    info!("obj: {:?} to address: {}", obj, address);
-    Ok(HttpResponse::Ok().json(obj))
+    let broadcast_request: BroadcastRequestType = serde_json::from_slice(&body)
+        .map_err(|e| error::ErrorBadRequest(format!("Invalid broadcast request: {}", e)))?;
+
+    info!(
+        "Broadcast request: {:?} to contract: {}",
+        broadcast_request, contract_address
+    );
+
+    let broadcast_id = match &broadcast_request {
+        BroadcastRequestType::TicketCreate { .. } => {
+            format!("broadcast_ticket_{}", Uuid::new_v4().simple())
+        }
+        BroadcastRequestType::VerifyMessages { .. } => {
+            format!("broadcast_verify_{}", Uuid::new_v4().simple())
+        }
+        BroadcastRequestType::RouteIncomingMessages { .. } => {
+            format!("broadcast_route_{}", Uuid::new_v4().simple())
+        }
+    };
+
+    // Store the broadcast with RECEIVED status
+    let broadcast_json = serde_json::to_string(&broadcast_request).map_err(|e| {
+        error::ErrorInternalServerError(format!("Failed to serialize broadcast: {}", e))
+    })?;
+
+    broadcasts_model
+        .insert(&broadcast_id, &broadcast_json, BroadcastStatus::Received)
+        .await
+        .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
+
+    let response = BroadcastResponse {
+        broadcast_id: broadcast_id.clone(),
+    };
+
+    info!("Generated broadcast response: {:?}", response);
+    Ok(HttpResponse::Ok().json(response))
+}
+
+#[get("/contracts/{contract_address}/broadcasts/{broadcast_id}")]
+async fn get_broadcast(
+    contract_address: web::Path<String>,
+    broadcast_id: web::Path<String>,
+    broadcasts_model: web::Data<BroadcastsModel>,
+) -> Result<HttpResponse, Error> {
+    let broadcast = broadcasts_model
+        .find(broadcast_id.as_str())
+        .await
+        .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
+
+    Ok(HttpResponse::Ok().json(broadcast))
 }
 
 #[post("/chains/{chain}/events")]
@@ -216,6 +291,7 @@ async fn post_task(
 #[get("/chains/{chain}/tasks")]
 async fn get_tasks(
     db: web::Data<TasksModel>,
+    chain: web::Path<String>,
     query: web::Query<HashMap<String, String>>,
 ) -> Result<HttpResponse, Error> {
     let after = query.get("after").map(|s| s.as_str());
@@ -226,7 +302,7 @@ async fn get_tasks(
     }
 
     let raw_tasks = db
-        .get_tasks(after)
+        .get_tasks(&chain, after)
         .await
         .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
 
@@ -245,12 +321,14 @@ impl Server {
         address: String,
         tasks_model: TasksModel,
         events_model: EventsModel,
+        broadcasts_model: BroadcastsModel,
     ) -> Self {
         Self {
             port,
             address,
             tasks_model,
             events_model,
+            broadcasts_model,
         }
     }
 
@@ -261,9 +339,11 @@ impl Server {
             App::new()
                 .app_data(web::Data::new(self.tasks_model.clone()))
                 .app_data(web::Data::new(self.events_model.clone()))
+                .app_data(web::Data::new(self.broadcasts_model.clone()))
                 .service(get_tasks)
                 .service(post_task)
                 .service(address_broadcast)
+                .service(get_broadcast)
                 .service(post_events)
         })
         .bind(addr)?

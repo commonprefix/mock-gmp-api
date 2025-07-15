@@ -84,6 +84,7 @@ impl TasksModel {
 
     pub async fn get_tasks(
         &self,
+        chain: &str,
         after: Option<&str>,
     ) -> Result<Vec<serde_json::Value>, anyhow::Error> {
         let after_task = match after {
@@ -94,8 +95,12 @@ impl TasksModel {
             Some(task) => task.common().timestamp.clone(),
             None => "1970-01-01T00:00:00Z".to_string(),
         };
-        let query = format!("SELECT task FROM {} WHERE timestamp > $1", PG_TABLE_NAME);
+        let query = format!(
+            "SELECT task FROM {} WHERE chain = $1 AND timestamp > $2",
+            PG_TABLE_NAME
+        );
         let rows = sqlx::query(&query)
+            .bind(chain)
             .bind(after_task_timestamp.parse::<DateTime<Utc>>().unwrap())
             .fetch_all(&self.pool)
             .await?;
@@ -156,7 +161,7 @@ mod tests {
         let mut expected_tasks = Vec::new();
 
         // Test all VerifyTasks
-        let valid_verify_tasks_dir = "testdata/xrpl_tasks/valid_tasks/VerifyTask.json";
+        let valid_verify_tasks_dir = "testdata/gmp_tasks/valid_tasks/VerifyTask.json";
         let valid_verify_tasks_json = std::fs::read_to_string(valid_verify_tasks_dir).unwrap();
         let valid_verify_tasks: Vec<VerifyTask> =
             serde_json::from_str(&valid_verify_tasks_json).unwrap();
@@ -191,7 +196,7 @@ mod tests {
         }
 
         // Test all ExecuteTasks
-        let valid_execute_tasks_dir = "testdata/xrpl_tasks/valid_tasks/ExecuteTask.json";
+        let valid_execute_tasks_dir = "testdata/gmp_tasks/valid_tasks/ExecuteTask.json";
         let valid_execute_tasks_json = std::fs::read_to_string(valid_execute_tasks_dir).unwrap();
         let valid_execute_tasks: Vec<ExecuteTask> =
             serde_json::from_str(&valid_execute_tasks_json).unwrap();
@@ -226,7 +231,7 @@ mod tests {
         }
 
         // Test all GatewayTxTasks
-        let valid_gateway_tx_tasks_dir = "testdata/xrpl_tasks/valid_tasks/GatewayTxTask.json";
+        let valid_gateway_tx_tasks_dir = "testdata/gmp_tasks/valid_tasks/GatewayTxTask.json";
         let valid_gateway_tx_tasks_json =
             std::fs::read_to_string(valid_gateway_tx_tasks_dir).unwrap();
         let valid_gateway_tx_tasks: Vec<GatewayTxTask> =
@@ -261,7 +266,7 @@ mod tests {
             expected_tasks.push(Task::GatewayTx(valid_gateway_tx_task));
         }
 
-        let raw_tasks = db.get_tasks(None).await.unwrap();
+        let raw_tasks = db.get_tasks("xrpl", None).await.unwrap();
         assert_eq!(raw_tasks.len(), expected_tasks.len());
 
         let parsed_tasks: Vec<Task> = raw_tasks
@@ -361,7 +366,7 @@ mod tests {
 
         // Get tasks after second task
         let tasks = db
-            .get_tasks(Some("0197a679-9cf6-785c-8666-a2cf0c84c985"))
+            .get_tasks("xrpl", Some("0197a679-9cf6-785c-8666-a2cf0c84c985"))
             .await
             .unwrap();
 
@@ -369,14 +374,14 @@ mod tests {
         assert_eq!(tasks.len(), 1);
 
         let tasks = db
-            .get_tasks(Some("0197a679-9cf6-785c-8666-a2cf0c84c984"))
+            .get_tasks("xrpl", Some("0197a679-9cf6-785c-8666-a2cf0c84c984"))
             .await
             .unwrap();
 
         assert_eq!(tasks.len(), 2);
 
         let tasks = db
-            .get_tasks(Some("0197a679-9cf6-785c-8666-a2cf0c84c986"))
+            .get_tasks("xrpl", Some("0197a679-9cf6-785c-8666-a2cf0c84c986"))
             .await
             .unwrap();
 
