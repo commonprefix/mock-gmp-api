@@ -82,9 +82,23 @@ impl TasksModel {
         Ok(())
     }
 
-    pub async fn get_tasks(&self) -> Result<Vec<serde_json::Value>, anyhow::Error> {
-        let query = format!("SELECT task FROM {}", PG_TABLE_NAME);
-        let rows = sqlx::query(&query).fetch_all(&self.pool).await?;
+    pub async fn get_tasks(
+        &self,
+        after: Option<&str>,
+    ) -> Result<Vec<serde_json::Value>, anyhow::Error> {
+        let after_task = match after {
+            Some(id) => self.find(id).await?,
+            None => None,
+        };
+        let after_task_timestamp: String = match after_task {
+            Some(task) => task.common().timestamp.clone(),
+            None => "1970-01-01T00:00:00Z".to_string(),
+        };
+        let query = format!("SELECT task FROM {} WHERE timestamp > $1", PG_TABLE_NAME);
+        let rows = sqlx::query(&query)
+            .bind(after_task_timestamp.parse::<DateTime<Utc>>().unwrap())
+            .fetch_all(&self.pool)
+            .await?;
 
         Ok(rows
             .iter()
@@ -113,6 +127,7 @@ mod tests {
     use crate::{
         gmp_types::{ExecuteTask, GatewayTxTask, Task, TaskKind, VerifyTask},
         models::tasks::TasksModel,
+        utils::parse_task,
     };
 
     async fn setup_test_container() -> (TasksModel, ContainerAsync<postgres::Postgres>) {
@@ -139,7 +154,6 @@ mod tests {
     async fn test_upsert_and_get_tasks() {
         let (db, _container) = setup_test_container().await;
         let mut expected_tasks = Vec::new();
-        let mut task_count = 0;
 
         // Test all VerifyTasks
         let valid_verify_tasks_dir = "testdata/xrpl_tasks/valid_tasks/VerifyTask.json";
@@ -174,7 +188,6 @@ mod tests {
             .unwrap();
 
             expected_tasks.push(Task::Verify(valid_verify_task));
-            task_count += 1;
         }
 
         // Test all ExecuteTasks
@@ -210,7 +223,6 @@ mod tests {
             .unwrap();
 
             expected_tasks.push(Task::Execute(valid_execute_task));
-            task_count += 1;
         }
 
         // Test all GatewayTxTasks
@@ -247,22 +259,19 @@ mod tests {
             .unwrap();
 
             expected_tasks.push(Task::GatewayTx(valid_gateway_tx_task));
-            task_count += 1;
         }
 
-        let raw_tasks = db.get_tasks().await.unwrap();
-        assert_eq!(raw_tasks.len(), task_count);
+        let raw_tasks = db.get_tasks(None).await.unwrap();
+        assert_eq!(raw_tasks.len(), expected_tasks.len());
 
         let parsed_tasks: Vec<Task> = raw_tasks
             .iter()
-            .map(|task_json| crate::utils::parse_task(task_json).unwrap())
+            .map(|task_json| parse_task(task_json).unwrap())
             .collect();
 
-        let expected_task_ids: std::collections::HashSet<String> =
-            expected_tasks.iter().map(|task| task.id()).collect();
+        let expected_task_ids: Vec<String> = expected_tasks.iter().map(|task| task.id()).collect();
 
-        let parsed_task_ids: std::collections::HashSet<String> =
-            parsed_tasks.iter().map(|task| task.id()).collect();
+        let parsed_task_ids: Vec<String> = parsed_tasks.iter().map(|task| task.id()).collect();
 
         assert_eq!(expected_task_ids, parsed_task_ids, "Task IDs should match");
 
@@ -281,5 +290,96 @@ mod tests {
                 expected_task.id()
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_get_tasks_after() {
+        let (db, _container) = setup_test_container().await;
+
+        let task1_json = serde_json::json!({
+            "id": "0197a679-9cf6-785c-8666-a2cf0c84c984",
+            "chain": "xrpl",
+            "timestamp": "2024-01-01T00:00:00Z",
+            "type": "GATEWAY_TX",
+            "meta": null,
+            "task": {
+                "executeData": "data1"
+            }
+        });
+
+        let task2_json = serde_json::json!({
+            "id": "0197a679-9cf6-785c-8666-a2cf0c84c985",
+            "chain": "xrpl",
+            "timestamp": "2024-02-01T00:00:00Z",
+            "type": "GATEWAY_TX",
+            "meta": null,
+            "task": {
+                "executeData": "data2"
+            }
+        });
+
+        let task3_json = serde_json::json!({
+            "id": "0197a679-9cf6-785c-8666-a2cf0c84c986",
+            "chain": "xrpl",
+            "timestamp": "2024-03-01T00:00:00Z",
+            "type": "GATEWAY_TX",
+            "meta": null,
+            "task": {
+                "executeData": "data3"
+            }
+        });
+
+        db.upsert(
+            "0197a679-9cf6-785c-8666-a2cf0c84c984",
+            "xrpl",
+            "2024-01-01T00:00:00Z".parse::<DateTime<Utc>>().unwrap(),
+            TaskKind::GatewayTx,
+            Some(&serde_json::to_string(&task1_json).unwrap()),
+        )
+        .await
+        .unwrap();
+
+        db.upsert(
+            "0197a679-9cf6-785c-8666-a2cf0c84c985",
+            "xrpl",
+            "2024-02-01T00:00:00Z".parse::<DateTime<Utc>>().unwrap(),
+            TaskKind::GatewayTx,
+            Some(&serde_json::to_string(&task2_json).unwrap()),
+        )
+        .await
+        .unwrap();
+
+        db.upsert(
+            "0197a679-9cf6-785c-8666-a2cf0c84c986",
+            "xrpl",
+            "2024-03-01T00:00:00Z".parse::<DateTime<Utc>>().unwrap(),
+            TaskKind::GatewayTx,
+            Some(&serde_json::to_string(&task3_json).unwrap()),
+        )
+        .await
+        .unwrap();
+
+        // Get tasks after second task
+        let tasks = db
+            .get_tasks(Some("0197a679-9cf6-785c-8666-a2cf0c84c985"))
+            .await
+            .unwrap();
+
+        // Should only return one task which has a greater timestamp
+        assert_eq!(tasks.len(), 1);
+
+        let tasks = db
+            .get_tasks(Some("0197a679-9cf6-785c-8666-a2cf0c84c984"))
+            .await
+            .unwrap();
+
+        assert_eq!(tasks.len(), 2);
+
+        let tasks = db
+            .get_tasks(Some("0197a679-9cf6-785c-8666-a2cf0c84c986"))
+            .await
+            .unwrap();
+
+        assert_eq!(tasks.len(), 0);
     }
 }

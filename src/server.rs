@@ -218,14 +218,15 @@ async fn get_tasks(
     db: web::Data<TasksModel>,
     query: web::Query<HashMap<String, String>>,
 ) -> Result<HttpResponse, Error> {
-    let after = query.get("after");
-    if let Some(after_value) = after {
-        debug!("Requesting tasks after: {}", after_value);
-        // TODO: Implement filtering by 'after' parameter in database query
+    let after = query.get("after").map(|s| s.as_str());
+    if after.is_some() {
+        debug!("Requesting tasks after: {:?}", after.unwrap());
+    } else {
+        debug!("Requesting all tasks");
     }
 
     let raw_tasks = db
-        .get_tasks()
+        .get_tasks(after)
         .await
         .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
 
