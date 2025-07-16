@@ -10,9 +10,10 @@ After launching PostgreSQL, run:
 To run the server : `cargo run --bin server`  
 To run the client : `cargo run --bin client`
 
-## Server Endpoints:
+## Server Endpoints:  
 
 GET /chain/\<chain_name\>/tasks  
+GET /contracts/\<contract_address\>/broadcasts/\<broadcast_id\>  
 POST /chain/\<chain_name\>/task   
 POST /chain/\<chain_name\>/events    
-POST /contracts/\<contract_address\>/broadacast  
+POST /contracts/\<contract_address\>/broadacasts    

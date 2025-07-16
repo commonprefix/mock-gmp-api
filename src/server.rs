@@ -4,6 +4,7 @@ use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::fs;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -15,7 +16,7 @@ use crate::{
         broadcasts::{BroadcastStatus, BroadcastsModel},
         events::EventsModel,
     },
-    utils::parse_task,
+    utils::{execute_script_file, parse_task},
 };
 
 pub struct Server {
@@ -111,16 +112,176 @@ async fn address_broadcast(
 
 #[get("/contracts/{contract_address}/broadcasts/{broadcast_id}")]
 async fn get_broadcast(
-    contract_address: web::Path<String>,
-    broadcast_id: web::Path<String>,
+    path: web::Path<(String, String)>,
     broadcasts_model: web::Data<BroadcastsModel>,
 ) -> Result<HttpResponse, Error> {
-    let broadcast = broadcasts_model
-        .find(broadcast_id.as_str())
+    let (contract_address, broadcast_id) = path.into_inner();
+    let maybe_broadcast_with_tx = match broadcasts_model
+        .find_with_tx_hash(broadcast_id.as_str())
         .await
-        .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
+    {
+        Ok(result) => result,
+        Err(e) => {
+            let error_response = serde_json::json!({
+                "error": format!("Database error: {}", e)
+            });
+            return Ok(HttpResponse::InternalServerError().json(error_response));
+        }
+    };
 
-    Ok(HttpResponse::Ok().json(broadcast))
+    if maybe_broadcast_with_tx.is_none() {
+        let error_response = serde_json::json!({
+            "error": "Broadcast not found"
+        });
+        return Ok(HttpResponse::NotFound().json(error_response));
+    }
+
+    let mut broadcast_with_tx = maybe_broadcast_with_tx.unwrap();
+
+    let broadcast_tx_hash = broadcast_with_tx
+        .tx_hash
+        .as_deref()
+        .unwrap_or("no_tx_hash_found");
+
+    debug!(
+        "Found broadcast with status: {:?}, tx_hash: {}",
+        broadcast_with_tx.status, broadcast_tx_hash
+    );
+
+    // Only query blockchain if status is RECEIVED
+    if broadcast_with_tx.status == BroadcastStatus::Received {
+        info!(
+            "Status is RECEIVED, querying blockchain for tx: {}",
+            broadcast_tx_hash
+        );
+
+        match execute_script_file(
+            "scripts/tx_status.sh",
+            &[&broadcast_id, &contract_address, broadcast_tx_hash],
+        )
+        .await
+        {
+            Ok(output) => {
+                info!("Script file output:\n{}", output);
+
+                match fs::read_to_string("script_result.json") {
+                    Ok(result_content) => match serde_json::from_str::<Value>(&result_content) {
+                        Ok(script_result) => {
+                            let script_status =
+                                script_result["status"].as_str().unwrap_or("FAILED");
+
+                            match script_status {
+                                "SUCCESS" => {
+                                    info!("Transaction successful, updating status to SUCCESS");
+                                    if let Err(e) = broadcasts_model
+                                        .update_status(&broadcast_id, BroadcastStatus::Success)
+                                        .await
+                                    {
+                                        warn!("Failed to update status to SUCCESS: {}", e);
+                                    } else {
+                                        broadcast_with_tx.status = BroadcastStatus::Success;
+                                    }
+                                }
+                                "FAILED" => {
+                                    let error_msg = script_result["error"]
+                                        .as_str()
+                                        .unwrap_or("Transaction failed");
+                                    info!(
+                                        "Transaction failed: {}, updating status to FAILED",
+                                        error_msg
+                                    );
+                                    if let Err(e) = broadcasts_model
+                                        .update_status(&broadcast_id, BroadcastStatus::Failed)
+                                        .await
+                                    {
+                                        warn!("Failed to update status to FAILED: {}", e);
+                                    } else {
+                                        broadcast_with_tx.status = BroadcastStatus::Failed;
+                                        broadcast_with_tx.error = Some(error_msg.to_string());
+                                    }
+                                    if let Err(e) = broadcasts_model
+                                        .update_error(&broadcast_id, error_msg)
+                                        .await
+                                    {
+                                        warn!("Failed to update error: {}", e);
+                                    }
+                                }
+                                "RECEIVED" => {
+                                    info!("Transaction still pending, keeping status as RECEIVED");
+                                    // Status remains RECEIVED - no database update needed
+                                    // broadcast_with_tx.status is already RECEIVED
+                                }
+                                _ => {
+                                    warn!(
+                                        "Unknown script status: {}, treating as FAILED",
+                                        script_status
+                                    );
+                                    let error_msg = "Unknown transaction status";
+                                    if let Err(e) = broadcasts_model
+                                        .update_status(&broadcast_id, BroadcastStatus::Failed)
+                                        .await
+                                    {
+                                        warn!("Failed to update status to FAILED: {}", e);
+                                    } else {
+                                        broadcast_with_tx.status = BroadcastStatus::Failed;
+                                        broadcast_with_tx.error = Some(error_msg.to_string());
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to parse script result JSON: {}", e);
+                        }
+                    },
+                    Err(e) => {
+                        warn!("Failed to read script_result.json: {}", e);
+                    }
+                }
+                let _ = fs::remove_file("script_result.json");
+            }
+            Err(e) => {
+                warn!("Script file failed: {}", e);
+            }
+        }
+    } else {
+        info!(
+            "Status is {:?}, returning current status without querying blockchain",
+            broadcast_with_tx.status
+        );
+    }
+
+    let response = match broadcast_with_tx.status {
+        BroadcastStatus::Received => {
+            serde_json::json!({
+                "status": "RECEIVED"
+            })
+        }
+        BroadcastStatus::Success => match &broadcast_with_tx.tx_hash {
+            Some(tx_hash) => serde_json::json!({
+                "status": "SUCCESS",
+                "txHash": tx_hash
+            }),
+            None => serde_json::json!({
+                "status": "FAILED",
+                "error": "Success status but no transaction hash available"
+            }),
+        },
+        BroadcastStatus::Failed => {
+            if let Some(error_msg) = &broadcast_with_tx.error {
+                serde_json::json!({
+                    "status": "FAILED",
+                    "error": error_msg
+                })
+            } else {
+                serde_json::json!({
+                    "status": "FAILED",
+                    "error": "Transaction execution failed"
+                })
+            }
+        }
+    };
+
+    Ok(HttpResponse::Ok().json(response))
 }
 
 #[post("/chains/{chain}/events")]
