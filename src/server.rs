@@ -1,20 +1,22 @@
 use actix_web::{App, Error, HttpResponse, HttpServer, error, get, post, web};
+use base64::{Engine as _, engine::general_purpose};
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha3::{Digest, Keccak256};
 use std::collections::HashMap;
-use std::fs;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::{
     TasksModel,
     event_handler::handle_call_or_gas_credit_event,
-    gmp_types::{Event, PostEventResponse, PostEventResult, Task},
+    gmp_types::{Event, PostEventResponse, PostEventResult, StorePayloadResult, Task},
     models::{
         broadcasts::{BroadcastStatus, BroadcastsModel},
         events::EventsModel,
+        payloads::PayloadsModel,
     },
     utils::{execute_script_file, parse_task},
 };
@@ -25,6 +27,7 @@ pub struct Server {
     pub tasks_model: TasksModel,
     pub events_model: EventsModel,
     pub broadcasts_model: BroadcastsModel,
+    pub payloads_model: PayloadsModel,
 }
 
 const MAX_SIZE: usize = 262_144; // max payload size is 256k
@@ -80,27 +83,112 @@ async fn address_broadcast(
         broadcast_request, contract_address
     );
 
-    let broadcast_id = match &broadcast_request {
-        BroadcastRequestType::TicketCreate { .. } => {
-            format!("broadcast_ticket_{}", Uuid::new_v4().simple())
-        }
-        BroadcastRequestType::VerifyMessages { .. } => {
-            format!("broadcast_verify_{}", Uuid::new_v4().simple())
-        }
-        BroadcastRequestType::RouteIncomingMessages { .. } => {
-            format!("broadcast_route_{}", Uuid::new_v4().simple())
-        }
-    };
+    // let broadcast_id = match &broadcast_request {
+    //     BroadcastRequestType::TicketCreate { .. } => {
+    //         format!("broadcast_ticket_{}", Uuid::new_v4().simple())
+    //     }
+    //     BroadcastRequestType::VerifyMessages { .. } => {
+    //         format!("broadcast_verify_{}", Uuid::new_v4().simple())
+    //     }
+    //     BroadcastRequestType::RouteIncomingMessages { .. } => {
+    //         format!("broadcast_route_{}", Uuid::new_v4().simple())
+    //     }
+    // };
 
-    // Store the broadcast with RECEIVED status
     let broadcast_json = serde_json::to_string(&broadcast_request).map_err(|e| {
         error::ErrorInternalServerError(format!("Failed to serialize broadcast: {}", e))
     })?;
+
+    let broadcast_id = Uuid::new_v4().simple().to_string();
 
     broadcasts_model
         .insert(&broadcast_id, &broadcast_json, BroadcastStatus::Received)
         .await
         .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
+
+    // Spawn background task to execute script
+    let broadcast_id_clone = broadcast_id.clone();
+    let contract_address_clone = contract_address.clone();
+    let broadcasts_model_clone = broadcasts_model.get_ref().clone();
+
+    tokio::spawn(async move {
+        match execute_script_file(
+            "scripts/tx_status.sh",
+            &[&broadcast_id_clone, &contract_address_clone],
+        )
+        .await
+        {
+            Ok(output) => {
+                info!(
+                    "Background script output for broadcast {}: {}",
+                    broadcast_id_clone, output
+                );
+
+                // Parse script result directly from stdout output
+                if let Ok(script_result) = serde_json::from_str::<serde_json::Value>(&output) {
+                    let script_status = script_result
+                        .get("status")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("FAILED");
+
+                    match script_status {
+                        "SUCCESS" => {
+                            if let Err(e) = broadcasts_model_clone
+                                .update_status(&broadcast_id_clone, BroadcastStatus::Success)
+                                .await
+                            {
+                                warn!("Failed to update broadcast status to SUCCESS: {}", e);
+                            }
+                        }
+                        "FAILED" => {
+                            let error_msg = script_result
+                                .get("error")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("Transaction failed");
+
+                            if let Err(e) = broadcasts_model_clone
+                                .update_status(&broadcast_id_clone, BroadcastStatus::Failed)
+                                .await
+                            {
+                                warn!("Failed to update broadcast status to FAILED: {}", e);
+                            }
+
+                            if let Err(e) = broadcasts_model_clone
+                                .update_error(&broadcast_id_clone, error_msg)
+                                .await
+                            {
+                                warn!("Failed to update broadcast error: {}", e);
+                            }
+                        }
+                        "RECEIVED" => {
+                            // Transaction still pending, status remains as is
+                            info!(
+                                "Transaction still pending for broadcast {}",
+                                broadcast_id_clone
+                            );
+                        }
+                        _ => {
+                            warn!(
+                                "Unknown script status for broadcast {}: {}",
+                                broadcast_id_clone, script_status
+                            );
+                        }
+                    }
+                } else {
+                    warn!(
+                        "Failed to parse script output as JSON for broadcast {}: {}",
+                        broadcast_id_clone, output
+                    );
+                }
+            }
+            Err(e) => {
+                warn!(
+                    "Background script failed for broadcast {}: {}",
+                    broadcast_id_clone, e
+                );
+            }
+        }
+    });
 
     let response = BroadcastResponse {
         broadcast_id: broadcast_id.clone(),
@@ -115,9 +203,143 @@ async fn get_broadcast(
     path: web::Path<(String, String)>,
     broadcasts_model: web::Data<BroadcastsModel>,
 ) -> Result<HttpResponse, Error> {
-    let (contract_address, broadcast_id) = path.into_inner();
-    let maybe_broadcast_with_tx = match broadcasts_model
-        .find_with_tx_hash(broadcast_id.as_str())
+    let (_contract_address, broadcast_id) = path.into_inner();
+    // let maybe_broadcast_with_tx = match broadcasts_model
+    //     .find_with_tx_hash(broadcast_id.as_str())
+    //     .await
+    // {
+    //     Ok(result) => result,
+    //     Err(e) => {
+    //         let error_response = serde_json::json!({
+    //             "error": format!("Database error: {}", e)
+    //         });
+    //         return Ok(HttpResponse::InternalServerError().json(error_response));
+    //     }
+    // };
+
+    // if maybe_broadcast_with_tx.is_none() {
+    //     let error_response = serde_json::json!({
+    //         "error": "Broadcast not found"
+    //     });
+    //     return Ok(HttpResponse::NotFound().json(error_response));
+    // }
+
+    // let mut broadcast_with_tx = maybe_broadcast_with_tx.unwrap();
+
+    // let broadcast_tx_hash = broadcast_with_tx
+    //     .tx_hash
+    //     .as_deref()
+    //     .unwrap_or("no_tx_hash_found");
+
+    // debug!(
+    //     "Found broadcast with status: {:?}, tx_hash: {}",
+    //     broadcast_with_tx.status, broadcast_tx_hash
+    // );
+
+    // // Only query blockchain if status is RECEIVED
+    // if broadcast_with_tx.status == BroadcastStatus::Received {
+    //     info!(
+    //         "Status is RECEIVED, querying blockchain for tx: {}",
+    //         broadcast_tx_hash
+    //     );
+
+    //     match execute_script_file(
+    //         "scripts/tx_status.sh",
+    //         &[&broadcast_id, &contract_address, broadcast_tx_hash],
+    //     )
+    //     .await
+    //     {
+    //         Ok(output) => {
+    //             info!("Script file output:\n{}", output);
+
+    //             match fs::read_to_string("script_result.json") {
+    //                 Ok(result_content) => match serde_json::from_str::<Value>(&result_content) {
+    //                     Ok(script_result) => {
+    //                         let script_status =
+    //                             script_result["status"].as_str().unwrap_or("FAILED");
+
+    //                         match script_status {
+    //                             "SUCCESS" => {
+    //                                 info!("Transaction successful, updating status to SUCCESS");
+    //                                 if let Err(e) = broadcasts_model
+    //                                     .update_status(&broadcast_id, BroadcastStatus::Success)
+    //                                     .await
+    //                                 {
+    //                                     warn!("Failed to update status to SUCCESS: {}", e);
+    //                                 } else {
+    //                                     broadcast_with_tx.status = BroadcastStatus::Success;
+    //                                 }
+    //                             }
+    //                             "FAILED" => {
+    //                                 let error_msg = script_result["error"]
+    //                                     .as_str()
+    //                                     .unwrap_or("Transaction failed");
+    //                                 info!(
+    //                                     "Transaction failed: {}, updating status to FAILED",
+    //                                     error_msg
+    //                                 );
+    //                                 if let Err(e) = broadcasts_model
+    //                                     .update_status(&broadcast_id, BroadcastStatus::Failed)
+    //                                     .await
+    //                                 {
+    //                                     warn!("Failed to update status to FAILED: {}", e);
+    //                                 } else {
+    //                                     broadcast_with_tx.status = BroadcastStatus::Failed;
+    //                                     broadcast_with_tx.error = Some(error_msg.to_string());
+    //                                 }
+    //                                 if let Err(e) = broadcasts_model
+    //                                     .update_error(&broadcast_id, error_msg)
+    //                                     .await
+    //                                 {
+    //                                     warn!("Failed to update error: {}", e);
+    //                                 }
+    //                             }
+    //                             "RECEIVED" => {
+    //                                 info!("Transaction still pending, keeping status as RECEIVED");
+    //                                 // Status remains RECEIVED - no database update needed
+    //                                 // broadcast_with_tx.status is already RECEIVED
+    //                             }
+    //                             _ => {
+    //                                 warn!(
+    //                                     "Unknown script status: {}, treating as FAILED",
+    //                                     script_status
+    //                                 );
+    //                                 let error_msg = "Unknown transaction status";
+    //                                 if let Err(e) = broadcasts_model
+    //                                     .update_status(&broadcast_id, BroadcastStatus::Failed)
+    //                                     .await
+    //                                 {
+    //                                     warn!("Failed to update status to FAILED: {}", e);
+    //                                 } else {
+    //                                     broadcast_with_tx.status = BroadcastStatus::Failed;
+    //                                     broadcast_with_tx.error = Some(error_msg.to_string());
+    //                                 }
+    //                             }
+    //                         }
+    //                     }
+    //                     Err(e) => {
+    //                         warn!("Failed to parse script result JSON: {}", e);
+    //                     }
+    //                 },
+    //                 Err(e) => {
+    //                     warn!("Failed to read script_result.json: {}", e);
+    //                 }
+    //             }
+    //             let _ = fs::remove_file("script_result.json");
+    //         }
+    //         Err(e) => {
+    //             warn!("Script file failed: {}", e);
+    //         }
+    //     }
+    // } else {
+    //     info!(
+    //         "Status is {:?}, returning current status without querying blockchain",
+    //         broadcast_with_tx.status
+    //     );
+    // }
+
+    let broadcast_with_status = match broadcasts_model
+        .find_with_status(broadcast_id.as_str())
         .await
     {
         Ok(result) => result,
@@ -129,134 +351,22 @@ async fn get_broadcast(
         }
     };
 
-    if maybe_broadcast_with_tx.is_none() {
+    if broadcast_with_status.is_none() {
         let error_response = serde_json::json!({
             "error": "Broadcast not found"
         });
         return Ok(HttpResponse::NotFound().json(error_response));
     }
 
-    let mut broadcast_with_tx = maybe_broadcast_with_tx.unwrap();
+    let broadcast_with_status = broadcast_with_status.unwrap();
 
-    let broadcast_tx_hash = broadcast_with_tx
-        .tx_hash
-        .as_deref()
-        .unwrap_or("no_tx_hash_found");
-
-    debug!(
-        "Found broadcast with status: {:?}, tx_hash: {}",
-        broadcast_with_tx.status, broadcast_tx_hash
-    );
-
-    // Only query blockchain if status is RECEIVED
-    if broadcast_with_tx.status == BroadcastStatus::Received {
-        info!(
-            "Status is RECEIVED, querying blockchain for tx: {}",
-            broadcast_tx_hash
-        );
-
-        match execute_script_file(
-            "scripts/tx_status.sh",
-            &[&broadcast_id, &contract_address, broadcast_tx_hash],
-        )
-        .await
-        {
-            Ok(output) => {
-                info!("Script file output:\n{}", output);
-
-                match fs::read_to_string("script_result.json") {
-                    Ok(result_content) => match serde_json::from_str::<Value>(&result_content) {
-                        Ok(script_result) => {
-                            let script_status =
-                                script_result["status"].as_str().unwrap_or("FAILED");
-
-                            match script_status {
-                                "SUCCESS" => {
-                                    info!("Transaction successful, updating status to SUCCESS");
-                                    if let Err(e) = broadcasts_model
-                                        .update_status(&broadcast_id, BroadcastStatus::Success)
-                                        .await
-                                    {
-                                        warn!("Failed to update status to SUCCESS: {}", e);
-                                    } else {
-                                        broadcast_with_tx.status = BroadcastStatus::Success;
-                                    }
-                                }
-                                "FAILED" => {
-                                    let error_msg = script_result["error"]
-                                        .as_str()
-                                        .unwrap_or("Transaction failed");
-                                    info!(
-                                        "Transaction failed: {}, updating status to FAILED",
-                                        error_msg
-                                    );
-                                    if let Err(e) = broadcasts_model
-                                        .update_status(&broadcast_id, BroadcastStatus::Failed)
-                                        .await
-                                    {
-                                        warn!("Failed to update status to FAILED: {}", e);
-                                    } else {
-                                        broadcast_with_tx.status = BroadcastStatus::Failed;
-                                        broadcast_with_tx.error = Some(error_msg.to_string());
-                                    }
-                                    if let Err(e) = broadcasts_model
-                                        .update_error(&broadcast_id, error_msg)
-                                        .await
-                                    {
-                                        warn!("Failed to update error: {}", e);
-                                    }
-                                }
-                                "RECEIVED" => {
-                                    info!("Transaction still pending, keeping status as RECEIVED");
-                                    // Status remains RECEIVED - no database update needed
-                                    // broadcast_with_tx.status is already RECEIVED
-                                }
-                                _ => {
-                                    warn!(
-                                        "Unknown script status: {}, treating as FAILED",
-                                        script_status
-                                    );
-                                    let error_msg = "Unknown transaction status";
-                                    if let Err(e) = broadcasts_model
-                                        .update_status(&broadcast_id, BroadcastStatus::Failed)
-                                        .await
-                                    {
-                                        warn!("Failed to update status to FAILED: {}", e);
-                                    } else {
-                                        broadcast_with_tx.status = BroadcastStatus::Failed;
-                                        broadcast_with_tx.error = Some(error_msg.to_string());
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            warn!("Failed to parse script result JSON: {}", e);
-                        }
-                    },
-                    Err(e) => {
-                        warn!("Failed to read script_result.json: {}", e);
-                    }
-                }
-                let _ = fs::remove_file("script_result.json");
-            }
-            Err(e) => {
-                warn!("Script file failed: {}", e);
-            }
-        }
-    } else {
-        info!(
-            "Status is {:?}, returning current status without querying blockchain",
-            broadcast_with_tx.status
-        );
-    }
-
-    let response = match broadcast_with_tx.status {
+    let response = match broadcast_with_status.status {
         BroadcastStatus::Received => {
             serde_json::json!({
                 "status": "RECEIVED"
             })
         }
-        BroadcastStatus::Success => match &broadcast_with_tx.tx_hash {
+        BroadcastStatus::Success => match &broadcast_with_status.tx_hash {
             Some(tx_hash) => serde_json::json!({
                 "status": "SUCCESS",
                 "txHash": tx_hash
@@ -267,7 +377,7 @@ async fn get_broadcast(
             }),
         },
         BroadcastStatus::Failed => {
-            if let Some(error_msg) = &broadcast_with_tx.error {
+            if let Some(error_msg) = &broadcast_with_status.error {
                 serde_json::json!({
                     "status": "FAILED",
                     "error": error_msg
@@ -476,6 +586,71 @@ async fn get_tasks(
     Ok(HttpResponse::Ok().json(response))
 }
 
+#[post("/payloads")]
+async fn post_payloads(
+    payloads_model: web::Data<PayloadsModel>,
+    mut payload: web::Payload,
+) -> Result<HttpResponse, Error> {
+    let mut body = web::BytesMut::new();
+    while let Some(chunk) = payload.next().await {
+        let chunk = chunk?;
+        if (body.len() + chunk.len()) > MAX_SIZE {
+            return Err(error::ErrorBadRequest("overflow"));
+        }
+        body.extend_from_slice(&chunk);
+    }
+
+    // Calculate keccak256 hash
+    let mut hasher = Keccak256::new();
+    hasher.update(&body);
+    let result = hasher.finalize();
+    let hash = format!("0x{}", hex::encode(result));
+
+    // Convert payload to base64 for storage (since it's binary data)
+    let payload_str = general_purpose::STANDARD.encode(&body);
+
+    // Store the payload using the hash as the id
+    payloads_model
+        .upsert(&hash, &payload_str)
+        .await
+        .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
+
+    let response = StorePayloadResult { keccak256: hash };
+
+    info!("Stored payload with hash: {}", response.keccak256);
+    Ok(HttpResponse::Ok().json(response))
+}
+
+#[get("/payloads/0x{hash}")]
+async fn get_payload(
+    hash: web::Path<String>,
+    payloads_model: web::Data<PayloadsModel>,
+) -> Result<HttpResponse, Error> {
+    let full_hash = format!("0x{}", hash);
+    let payload_base64 = payloads_model
+        .find(&full_hash)
+        .await
+        .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
+
+    match payload_base64 {
+        Some(payload_str) => {
+            // Decode base64 back to binary
+            let payload_bytes = general_purpose::STANDARD
+                .decode(&payload_str)
+                .map_err(|e| {
+                    error::ErrorInternalServerError(format!("Failed to decode payload: {}", e))
+                })?;
+
+            Ok(HttpResponse::Ok()
+                .content_type("application/octet-stream")
+                .body(payload_bytes))
+        }
+        None => Ok(HttpResponse::NotFound().json(serde_json::json!({
+            "error": "Payload not found"
+        }))),
+    }
+}
+
 impl Server {
     pub fn new(
         port: u16,
@@ -483,6 +658,7 @@ impl Server {
         tasks_model: TasksModel,
         events_model: EventsModel,
         broadcasts_model: BroadcastsModel,
+        payloads_model: PayloadsModel,
     ) -> Self {
         Self {
             port,
@@ -490,6 +666,7 @@ impl Server {
             tasks_model,
             events_model,
             broadcasts_model,
+            payloads_model,
         }
     }
 
@@ -501,11 +678,14 @@ impl Server {
                 .app_data(web::Data::new(self.tasks_model.clone()))
                 .app_data(web::Data::new(self.events_model.clone()))
                 .app_data(web::Data::new(self.broadcasts_model.clone()))
+                .app_data(web::Data::new(self.payloads_model.clone()))
                 .service(get_tasks)
                 .service(post_task)
                 .service(address_broadcast)
                 .service(get_broadcast)
                 .service(post_events)
+                .service(post_payloads)
+                .service(get_payload)
         })
         .bind(addr)?
         .run()

@@ -105,6 +105,9 @@ async fn main() -> Result<(), anyhow::Error> {
       ]
     });
 
+    let test_payload =
+        b"Hello, World! This is a test payload with binary data: \x00\x01\x02\x03\xFF";
+
     match client.post_task(task).await {
         Ok(_response) => info!("Success for post_task"),
         Err(e) => error!("Error: {}", e),
@@ -118,6 +121,55 @@ async fn main() -> Result<(), anyhow::Error> {
     match client.post_events(events).await {
         Ok(_response) => info!("Success for post_events"),
         Err(e) => error!("Error: {}", e),
+    }
+
+    info!("=== Testing Payload Endpoints ===");
+
+    match client.post_payload(test_payload).await {
+        Ok(hash) => {
+            info!("POST /payloads successful, got hash: {}", hash);
+
+            match client.get_payload(&hash).await {
+                Ok(retrieved_data) => {
+                    info!(
+                        "GET /payloads/{} successful, retrieved {} bytes",
+                        hash,
+                        retrieved_data.len()
+                    );
+
+                    if test_payload == retrieved_data.as_slice() {
+                        info!("Payload data verification PASSED!");
+                    } else {
+                        error!("Payload data verification FAILED!");
+                    }
+                }
+                Err(e) => error!("GET /payloads failed: {}", e),
+            }
+        }
+        Err(e) => error!("POST /payloads failed: {}", e),
+    }
+
+    let test_payload2 = b"Another test with different binary data \x42\x69\x6E\x61\x72\x79";
+    match client.test_payload_roundtrip(test_payload2).await {
+        Ok(success) => {
+            if success {
+                info!("Payload roundtrip test PASSED!");
+            } else {
+                error!("Payload roundtrip test FAILED!");
+            }
+        }
+        Err(e) => error!("Payload roundtrip test error: {}", e),
+    }
+
+    match client.get_payload("0xnonexistenthash123").await {
+        Ok(_) => error!("Expected 404 for non-existent payload, but got success"),
+        Err(e) => {
+            if e.to_string().contains("not found") {
+                info!("404 handling works correctly for non-existent payload");
+            } else {
+                error!("Unexpected error for non-existent payload: {}", e);
+            }
+        }
     }
 
     info!("Succesfully performed all calls");

@@ -3,3 +3,8 @@ DROP TYPE IF EXISTS task_type;
 
 DROP TABLE IF EXISTS events;
 DROP TYPE IF EXISTS event_type;
+
+DROP TABLE IF EXISTS broadcasts;
+DROP TYPE IF EXISTS broadcast_status;
+
+DROP TABLE IF EXISTS payloads;

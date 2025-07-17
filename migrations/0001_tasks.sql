@@ -6,4 +6,4 @@ CREATE TABLE IF NOT EXISTS tasks (
     timestamp TIMESTAMPTZ NOT NULL,
     type task_type NOT NULL,
     task TEXT NOT NULL DEFAULT '{}'
-)
+);
