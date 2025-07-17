@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha3::{Digest, Keccak256};
 use std::collections::HashMap;
-use tracing::{debug, info, warn};
+use std::env;
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use crate::{
@@ -19,7 +20,7 @@ use crate::{
         payloads::PayloadsModel,
         queries::QueriesModel,
     },
-    utils::{execute_script_file, parse_task},
+    utils::parse_task,
 };
 
 pub struct Server {
@@ -40,26 +41,23 @@ struct EventsRequest {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-#[serde(untagged)]
-enum BroadcastRequestType {
-    TicketCreate {
-        #[serde(rename = "TicketCreate")]
-        ticket_create: serde_json::Value,
-    },
-    VerifyMessages {
-        #[serde(rename = "VerifyMessages")]
-        verify_messages: Vec<serde_json::Value>,
-    },
-    RouteIncomingMessages {
-        #[serde(rename = "RouteIncomingMessages")]
-        route_incoming_messages: Vec<serde_json::Value>,
-    },
+struct BroadcastPostResponse {
+    #[serde(rename = "broadcastID")]
+    broadcast_id: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct BroadcastResponse {
-    #[serde(rename = "broadcastID")]
-    broadcast_id: String,
+struct BroadcastGetResponse {
+    status: BroadcastStatus,
+    #[serde(rename = "txHash")]
+    tx_hash: Option<String>,
+    #[serde(rename = "txEvents")]
+    tx_events: Option<Vec<String>>,
+    error: Option<String>,
+    #[serde(rename = "completedAt")]
+    completed_at: Option<DateTime<Utc>>,
+    #[serde(rename = "receivedAt")]
+    received_at: Option<DateTime<Utc>>,
 }
 
 #[post("/contracts/{contract_address}/broadcasts")]
@@ -77,25 +75,13 @@ async fn address_broadcast(
         body.extend_from_slice(&chunk);
     }
 
-    let broadcast_request: BroadcastRequestType = serde_json::from_slice(&body)
+    let broadcast_request: Value = serde_json::from_slice(&body)
         .map_err(|e| error::ErrorBadRequest(format!("Invalid broadcast request: {}", e)))?;
 
     info!(
         "Broadcast request: {:?} to contract: {}",
         broadcast_request, contract_address
     );
-
-    // let broadcast_id = match &broadcast_request {
-    //     BroadcastRequestType::TicketCreate { .. } => {
-    //         format!("broadcast_ticket_{}", Uuid::new_v4().simple())
-    //     }
-    //     BroadcastRequestType::VerifyMessages { .. } => {
-    //         format!("broadcast_verify_{}", Uuid::new_v4().simple())
-    //     }
-    //     BroadcastRequestType::RouteIncomingMessages { .. } => {
-    //         format!("broadcast_route_{}", Uuid::new_v4().simple())
-    //     }
-    // };
 
     let broadcast_json = serde_json::to_string(&broadcast_request).map_err(|e| {
         error::ErrorInternalServerError(format!("Failed to serialize broadcast: {}", e))
@@ -111,138 +97,120 @@ async fn address_broadcast(
     let broadcast_id_clone = broadcast_id.clone();
     let contract_address_clone = contract_address.clone();
     let broadcast_json_clone = broadcast_json.clone();
-    let broadcasts_model_clone = broadcasts_model.get_ref().clone();
+    let broadcasts_model_clone = broadcasts_model.clone();
 
     tokio::spawn(async move {
         info!("Executing broadcast transaction for {}", broadcast_id_clone);
 
-        match execute_script_file(
-            "scripts/execute_broadcast.sh",
-            &[
-                &broadcast_id_clone,
-                &contract_address_clone,
-                &broadcast_json_clone,
-            ],
-        )
-        .await
-        {
+        let axelard_execute_script_str = format!(
+            "axelard tx wasm execute {} \
+        '{}' \
+  --from {} \
+  --keyring-backend test \
+  --node {} \
+  --chain-id {} \
+  --gas-prices 0.00005uamplifier \
+  --gas auto --gas-adjustment 1.5 --output json",
+            contract_address_clone,
+            broadcast_json_clone,
+            env::var("AXELAR_KEY_NAME").unwrap(),
+            env::var("AXELAR_RPC").unwrap(),
+            env::var("AXELAR_CHAIN_ID").unwrap()
+        );
+
+        let axelard_execute_script = tokio::process::Command::new("bash")
+            .arg("-c")
+            .arg(axelard_execute_script_str)
+            .output()
+            .await;
+
+        match axelard_execute_script {
             Ok(output) => {
+                let output_str = String::from_utf8_lossy(&output.stdout);
                 info!(
                     "Transaction execution output for broadcast {}: {}",
-                    broadcast_id_clone, output
+                    broadcast_id_clone, output_str
                 );
 
-                if let Ok(script_result) = serde_json::from_str::<serde_json::Value>(&output) {
-                    let script_status = script_result
-                        .get("status")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("FAILED");
+                if output.status.success() {
+                    if let Ok(script_result) =
+                        serde_json::from_str::<serde_json::Value>(&output_str)
+                    {
+                        let axelar_status = script_result
+                            .get("status")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("FAILED");
 
-                    match script_status {
-                        "SUCCESS" => {
-                            let tx_hash = script_result
-                                .get("tx_hash")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("");
+                        match axelar_status {
+                            "SUCCESS" => {
+                                let tx_hash = script_result
+                                    .get("txHash")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
 
-                            info!(
-                                "Transaction successful for broadcast {}, tx_hash: {}",
-                                broadcast_id_clone, tx_hash
-                            );
+                                info!(
+                                    "Transaction successful for broadcast {}, tx_hash: {}",
+                                    broadcast_id_clone, tx_hash
+                                );
 
-                            if !tx_hash.is_empty() {
+                                if !tx_hash.is_empty() {
+                                    if let Err(e) = broadcasts_model_clone
+                                        .upsert(
+                                            &broadcast_id_clone,
+                                            &broadcast_json_clone,
+                                            BroadcastStatus::Success,
+                                            Some(tx_hash),
+                                            None,
+                                        )
+                                        .await
+                                    {
+                                        error!("Failed to update transaction hash: {}", e);
+                                    }
+                                } else {
+                                    warn!("Transaction successful but no tx hash found");
+                                }
+                            }
+                            _ => {
+                                warn!(
+                                    "Transaction failed for broadcast {}: {}",
+                                    broadcast_id_clone, axelar_status
+                                );
+
                                 if let Err(e) = broadcasts_model_clone
                                     .upsert(
                                         &broadcast_id_clone,
                                         &broadcast_json_clone,
-                                        BroadcastStatus::Success,
-                                        Some(tx_hash),
+                                        BroadcastStatus::Failed,
                                         None,
+                                        Some(&String::from_utf8_lossy(&output.stdout)),
                                     )
                                     .await
                                 {
-                                    warn!("Failed to update transaction hash: {}", e);
+                                    error!("Failed to update broadcast status to FAILED: {}", e);
                                 }
-                            } else {
-                                warn!("Transaction successful but no tx hash found");
                             }
                         }
-                        "FAILED" => {
-                            let error_msg = script_result
-                                .get("error")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("Transaction failed");
-
-                            warn!(
-                                "Transaction failed for broadcast {}: {}",
-                                broadcast_id_clone, error_msg
-                            );
-
-                            if let Err(e) = broadcasts_model_clone
-                                .upsert(
-                                    &broadcast_id_clone,
-                                    &broadcast_json_clone,
-                                    BroadcastStatus::Failed,
-                                    None,
-                                    Some(error_msg),
-                                )
-                                .await
-                            {
-                                warn!("Failed to update broadcast status to FAILED: {}", e);
-                            }
-                        }
-                        _ => {
-                            warn!(
-                                "Unknown script status for broadcast {}: {}",
-                                broadcast_id_clone, script_status
-                            );
-                        }
+                    } else {
+                        error!("Transaction successful but couldn't parse output as JSON");
                     }
                 } else {
-                    warn!(
-                        "Failed to parse script output as JSON for broadcast {}: {}",
-                        broadcast_id_clone, output
+                    let error_str = String::from_utf8_lossy(&output.stderr);
+                    error!(
+                        "Transaction failed for broadcast {}: {}",
+                        broadcast_id_clone, error_str
                     );
-
-                    if let Err(e) = broadcasts_model_clone
-                        .upsert(
-                            &broadcast_id_clone,
-                            &broadcast_json_clone,
-                            BroadcastStatus::Failed,
-                            None,
-                            Some(&format!("Failed to parse script output as JSON")),
-                        )
-                        .await
-                    {
-                        warn!("Failed to update broadcast status to FAILED: {}", e);
-                    }
                 }
             }
             Err(e) => {
-                warn!(
+                error!(
                     "Transaction execution script failed for broadcast {}: {}",
                     broadcast_id_clone, e
                 );
-
-                if let Err(e) = broadcasts_model_clone
-                    .upsert(
-                        &broadcast_id_clone,
-                        &broadcast_json_clone,
-                        BroadcastStatus::Failed,
-                        None,
-                        Some(&format!("Script execution failed: {}", e)),
-                    )
-                    .await
-                {
-                    warn!("Failed to update broadcast error: {}", e);
-                }
             }
         }
     });
 
-    let response = BroadcastResponse {
-        broadcast_id: broadcast_id.clone(),
-    };
+    let response = BroadcastPostResponse { broadcast_id };
 
     info!("Generated broadcast response: {:?}", response);
     Ok(HttpResponse::Ok().json(response))
@@ -256,7 +224,7 @@ async fn get_broadcast(
     let (_contract_address, broadcast_id) = path.into_inner();
 
     let broadcast_with_status = match broadcasts_model
-        .find_with_status(broadcast_id.as_str())
+        .find_with_status_and_hash(broadcast_id.as_str())
         .await
     {
         Ok(result) => result,
@@ -278,32 +246,51 @@ async fn get_broadcast(
     let broadcast_with_status = broadcast_with_status.unwrap();
 
     let response = match broadcast_with_status.status {
-        BroadcastStatus::Received => {
-            serde_json::json!({
-                "status": "RECEIVED"
-            })
-        }
+        BroadcastStatus::Received => BroadcastGetResponse {
+            status: BroadcastStatus::Received,
+            tx_hash: None,
+            tx_events: None,
+            error: None,
+            completed_at: None,
+            received_at: None,
+        },
         BroadcastStatus::Success => match &broadcast_with_status.tx_hash {
-            Some(tx_hash) => serde_json::json!({
-                "status": "SUCCESS",
-                "txHash": tx_hash
-            }),
-            None => serde_json::json!({
-                "status": "FAILED",
-                "error": "Success status but no transaction hash available"
-            }),
+            Some(tx_hash) => BroadcastGetResponse {
+                status: BroadcastStatus::Success,
+                tx_hash: Some(tx_hash.clone()),
+                tx_events: None,
+                error: None,
+                completed_at: None,
+                received_at: None,
+            },
+            None => BroadcastGetResponse {
+                status: BroadcastStatus::Failed,
+                tx_hash: None,
+                tx_events: None,
+                error: Some("Success status but no transaction hash available".to_string()),
+                completed_at: None,
+                received_at: None,
+            },
         },
         BroadcastStatus::Failed => {
             if let Some(error_msg) = &broadcast_with_status.error {
-                serde_json::json!({
-                    "status": "FAILED",
-                    "error": error_msg
-                })
+                BroadcastGetResponse {
+                    status: BroadcastStatus::Failed,
+                    tx_hash: None,
+                    tx_events: None,
+                    error: Some(error_msg.clone()),
+                    completed_at: None,
+                    received_at: None,
+                }
             } else {
-                serde_json::json!({
-                    "status": "FAILED",
-                    "error": "Transaction execution failed"
-                })
+                BroadcastGetResponse {
+                    status: BroadcastStatus::Failed,
+                    tx_hash: None,
+                    tx_events: None,
+                    error: Some("Transaction execution failed".to_string()),
+                    completed_at: None,
+                    received_at: None,
+                }
             }
         }
     };

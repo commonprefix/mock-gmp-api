@@ -57,7 +57,7 @@ impl BroadcastsModel {
         Ok(broadcast)
     }
 
-    pub async fn find_with_status(
+    pub async fn find_with_status_and_hash(
         &self,
         id: &str,
     ) -> Result<Option<BroadcastWithTxHash>, anyhow::Error> {

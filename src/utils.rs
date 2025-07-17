@@ -9,9 +9,6 @@ use crate::gmp_types::{
     Task, UnknownTask, VerifyTask,
 };
 
-use std::collections::HashMap;
-use tokio::process::Command;
-
 fn parse_as<T: DeserializeOwned>(value: &Value) -> Result<T, anyhow::Error> {
     serde_json::from_value(value.clone()).map_err(|e| anyhow::anyhow!(e.to_string()))
 }
@@ -69,62 +66,4 @@ pub fn setup_logging() {
 
     tracing::subscriber::set_global_default(gmp_api)
         .expect("Failed to set global tracing subscriber");
-}
-
-/// Execute a simple bash command and return the output
-pub async fn execute_command(command: &str, args: &[&str]) -> Result<String, anyhow::Error> {
-    let output = Command::new(command).args(args).output().await?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow::anyhow!("Command failed: {}", stderr));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(stdout.trim().to_string())
-}
-
-/// Execute a bash script with environment variables
-pub async fn execute_bash_script(
-    script: &str,
-    env_vars: Option<HashMap<String, String>>,
-) -> Result<String, anyhow::Error> {
-    let mut cmd = Command::new("bash");
-    cmd.arg("-c").arg(script);
-
-    // Set environment variables if provided
-    if let Some(vars) = env_vars {
-        for (key, value) in vars {
-            cmd.env(key, value);
-        }
-    }
-
-    let output = cmd.output().await?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow::anyhow!("Script failed: {}", stderr));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(stdout.trim().to_string())
-}
-
-/// Execute a bash script from a file
-pub async fn execute_script_file(
-    script_path: &str,
-    args: &[&str],
-) -> Result<String, anyhow::Error> {
-    let mut cmd_args = vec![script_path];
-    cmd_args.extend_from_slice(args);
-
-    let output = Command::new("bash").args(&cmd_args).output().await?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow::anyhow!("Script file failed: {}", stderr));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(stdout.trim().to_string())
 }
