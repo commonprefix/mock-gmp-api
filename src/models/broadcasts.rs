@@ -119,9 +119,11 @@ impl BroadcastsModel {
         id: &str,
         broadcast: &str,
         status: BroadcastStatus,
+        tx_hash: Option<&str>,
+        error: Option<&str>,
     ) -> Result<(), anyhow::Error> {
         let query = format!(
-            "INSERT INTO {} (id, broadcast, status) VALUES ($1, $2, $3) ON CONFLICT (id) DO UPDATE SET broadcast = $2, status = $3",
+            "INSERT INTO {} (id, broadcast, status, tx_hash, error) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO UPDATE SET broadcast = $2, status = $3, tx_hash = $4, error = $5",
             PG_TABLE_NAME
         );
 
@@ -129,6 +131,8 @@ impl BroadcastsModel {
             .bind(id)
             .bind(broadcast)
             .bind(status)
+            .bind(tx_hash)
+            .bind(error)
             .execute(&self.pool)
             .await?;
 
@@ -138,32 +142,6 @@ impl BroadcastsModel {
     pub async fn delete(&self, id: &str) -> Result<(), anyhow::Error> {
         let query = format!("DELETE FROM {} WHERE id = $1", PG_TABLE_NAME);
         sqlx::query(&query).bind(id).execute(&self.pool).await?;
-
-        Ok(())
-    }
-
-    pub async fn update_status(
-        &self,
-        id: &str,
-        status: BroadcastStatus,
-    ) -> Result<(), anyhow::Error> {
-        let query = format!("UPDATE {} SET status = $1 WHERE id = $2", PG_TABLE_NAME);
-        sqlx::query(&query)
-            .bind(status)
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-
-        Ok(())
-    }
-
-    pub async fn update_error(&self, id: &str, error: &str) -> Result<(), anyhow::Error> {
-        let query = format!("UPDATE {} SET error = $1 WHERE id = $2", PG_TABLE_NAME);
-        sqlx::query(&query)
-            .bind(error)
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
 
         Ok(())
     }

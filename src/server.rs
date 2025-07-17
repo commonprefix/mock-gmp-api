@@ -17,6 +17,7 @@ use crate::{
         broadcasts::{BroadcastStatus, BroadcastsModel},
         events::EventsModel,
         payloads::PayloadsModel,
+        queries::QueriesModel,
     },
     utils::{execute_script_file, parse_task},
 };
@@ -28,6 +29,7 @@ pub struct Server {
     pub events_model: EventsModel,
     pub broadcasts_model: BroadcastsModel,
     pub payloads_model: PayloadsModel,
+    pub queries_model: QueriesModel,
 }
 
 const MAX_SIZE: usize = 262_144; // max payload size is 256k
@@ -106,25 +108,30 @@ async fn address_broadcast(
         .await
         .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
 
-    // Spawn background task to execute script
     let broadcast_id_clone = broadcast_id.clone();
     let contract_address_clone = contract_address.clone();
+    let broadcast_json_clone = broadcast_json.clone();
     let broadcasts_model_clone = broadcasts_model.get_ref().clone();
 
     tokio::spawn(async move {
+        info!("Executing broadcast transaction for {}", broadcast_id_clone);
+
         match execute_script_file(
-            "scripts/tx_status.sh",
-            &[&broadcast_id_clone, &contract_address_clone],
+            "scripts/execute_broadcast.sh",
+            &[
+                &broadcast_id_clone,
+                &contract_address_clone,
+                &broadcast_json_clone,
+            ],
         )
         .await
         {
             Ok(output) => {
                 info!(
-                    "Background script output for broadcast {}: {}",
+                    "Transaction execution output for broadcast {}: {}",
                     broadcast_id_clone, output
                 );
 
-                // Parse script result directly from stdout output
                 if let Ok(script_result) = serde_json::from_str::<serde_json::Value>(&output) {
                     let script_status = script_result
                         .get("status")
@@ -133,11 +140,31 @@ async fn address_broadcast(
 
                     match script_status {
                         "SUCCESS" => {
-                            if let Err(e) = broadcasts_model_clone
-                                .update_status(&broadcast_id_clone, BroadcastStatus::Success)
-                                .await
-                            {
-                                warn!("Failed to update broadcast status to SUCCESS: {}", e);
+                            let tx_hash = script_result
+                                .get("tx_hash")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+
+                            info!(
+                                "Transaction successful for broadcast {}, tx_hash: {}",
+                                broadcast_id_clone, tx_hash
+                            );
+
+                            if !tx_hash.is_empty() {
+                                if let Err(e) = broadcasts_model_clone
+                                    .upsert(
+                                        &broadcast_id_clone,
+                                        &broadcast_json_clone,
+                                        BroadcastStatus::Success,
+                                        Some(tx_hash),
+                                        None,
+                                    )
+                                    .await
+                                {
+                                    warn!("Failed to update transaction hash: {}", e);
+                                }
+                            } else {
+                                warn!("Transaction successful but no tx hash found");
                             }
                         }
                         "FAILED" => {
@@ -146,26 +173,23 @@ async fn address_broadcast(
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("Transaction failed");
 
+                            warn!(
+                                "Transaction failed for broadcast {}: {}",
+                                broadcast_id_clone, error_msg
+                            );
+
                             if let Err(e) = broadcasts_model_clone
-                                .update_status(&broadcast_id_clone, BroadcastStatus::Failed)
+                                .upsert(
+                                    &broadcast_id_clone,
+                                    &broadcast_json_clone,
+                                    BroadcastStatus::Failed,
+                                    None,
+                                    Some(error_msg),
+                                )
                                 .await
                             {
                                 warn!("Failed to update broadcast status to FAILED: {}", e);
                             }
-
-                            if let Err(e) = broadcasts_model_clone
-                                .update_error(&broadcast_id_clone, error_msg)
-                                .await
-                            {
-                                warn!("Failed to update broadcast error: {}", e);
-                            }
-                        }
-                        "RECEIVED" => {
-                            // Transaction still pending, status remains as is
-                            info!(
-                                "Transaction still pending for broadcast {}",
-                                broadcast_id_clone
-                            );
                         }
                         _ => {
                             warn!(
@@ -179,13 +203,39 @@ async fn address_broadcast(
                         "Failed to parse script output as JSON for broadcast {}: {}",
                         broadcast_id_clone, output
                     );
+
+                    if let Err(e) = broadcasts_model_clone
+                        .upsert(
+                            &broadcast_id_clone,
+                            &broadcast_json_clone,
+                            BroadcastStatus::Failed,
+                            None,
+                            Some(&format!("Failed to parse script output as JSON")),
+                        )
+                        .await
+                    {
+                        warn!("Failed to update broadcast status to FAILED: {}", e);
+                    }
                 }
             }
             Err(e) => {
                 warn!(
-                    "Background script failed for broadcast {}: {}",
+                    "Transaction execution script failed for broadcast {}: {}",
                     broadcast_id_clone, e
                 );
+
+                if let Err(e) = broadcasts_model_clone
+                    .upsert(
+                        &broadcast_id_clone,
+                        &broadcast_json_clone,
+                        BroadcastStatus::Failed,
+                        None,
+                        Some(&format!("Script execution failed: {}", e)),
+                    )
+                    .await
+                {
+                    warn!("Failed to update broadcast error: {}", e);
+                }
             }
         }
     });
@@ -204,139 +254,6 @@ async fn get_broadcast(
     broadcasts_model: web::Data<BroadcastsModel>,
 ) -> Result<HttpResponse, Error> {
     let (_contract_address, broadcast_id) = path.into_inner();
-    // let maybe_broadcast_with_tx = match broadcasts_model
-    //     .find_with_tx_hash(broadcast_id.as_str())
-    //     .await
-    // {
-    //     Ok(result) => result,
-    //     Err(e) => {
-    //         let error_response = serde_json::json!({
-    //             "error": format!("Database error: {}", e)
-    //         });
-    //         return Ok(HttpResponse::InternalServerError().json(error_response));
-    //     }
-    // };
-
-    // if maybe_broadcast_with_tx.is_none() {
-    //     let error_response = serde_json::json!({
-    //         "error": "Broadcast not found"
-    //     });
-    //     return Ok(HttpResponse::NotFound().json(error_response));
-    // }
-
-    // let mut broadcast_with_tx = maybe_broadcast_with_tx.unwrap();
-
-    // let broadcast_tx_hash = broadcast_with_tx
-    //     .tx_hash
-    //     .as_deref()
-    //     .unwrap_or("no_tx_hash_found");
-
-    // debug!(
-    //     "Found broadcast with status: {:?}, tx_hash: {}",
-    //     broadcast_with_tx.status, broadcast_tx_hash
-    // );
-
-    // // Only query blockchain if status is RECEIVED
-    // if broadcast_with_tx.status == BroadcastStatus::Received {
-    //     info!(
-    //         "Status is RECEIVED, querying blockchain for tx: {}",
-    //         broadcast_tx_hash
-    //     );
-
-    //     match execute_script_file(
-    //         "scripts/tx_status.sh",
-    //         &[&broadcast_id, &contract_address, broadcast_tx_hash],
-    //     )
-    //     .await
-    //     {
-    //         Ok(output) => {
-    //             info!("Script file output:\n{}", output);
-
-    //             match fs::read_to_string("script_result.json") {
-    //                 Ok(result_content) => match serde_json::from_str::<Value>(&result_content) {
-    //                     Ok(script_result) => {
-    //                         let script_status =
-    //                             script_result["status"].as_str().unwrap_or("FAILED");
-
-    //                         match script_status {
-    //                             "SUCCESS" => {
-    //                                 info!("Transaction successful, updating status to SUCCESS");
-    //                                 if let Err(e) = broadcasts_model
-    //                                     .update_status(&broadcast_id, BroadcastStatus::Success)
-    //                                     .await
-    //                                 {
-    //                                     warn!("Failed to update status to SUCCESS: {}", e);
-    //                                 } else {
-    //                                     broadcast_with_tx.status = BroadcastStatus::Success;
-    //                                 }
-    //                             }
-    //                             "FAILED" => {
-    //                                 let error_msg = script_result["error"]
-    //                                     .as_str()
-    //                                     .unwrap_or("Transaction failed");
-    //                                 info!(
-    //                                     "Transaction failed: {}, updating status to FAILED",
-    //                                     error_msg
-    //                                 );
-    //                                 if let Err(e) = broadcasts_model
-    //                                     .update_status(&broadcast_id, BroadcastStatus::Failed)
-    //                                     .await
-    //                                 {
-    //                                     warn!("Failed to update status to FAILED: {}", e);
-    //                                 } else {
-    //                                     broadcast_with_tx.status = BroadcastStatus::Failed;
-    //                                     broadcast_with_tx.error = Some(error_msg.to_string());
-    //                                 }
-    //                                 if let Err(e) = broadcasts_model
-    //                                     .update_error(&broadcast_id, error_msg)
-    //                                     .await
-    //                                 {
-    //                                     warn!("Failed to update error: {}", e);
-    //                                 }
-    //                             }
-    //                             "RECEIVED" => {
-    //                                 info!("Transaction still pending, keeping status as RECEIVED");
-    //                                 // Status remains RECEIVED - no database update needed
-    //                                 // broadcast_with_tx.status is already RECEIVED
-    //                             }
-    //                             _ => {
-    //                                 warn!(
-    //                                     "Unknown script status: {}, treating as FAILED",
-    //                                     script_status
-    //                                 );
-    //                                 let error_msg = "Unknown transaction status";
-    //                                 if let Err(e) = broadcasts_model
-    //                                     .update_status(&broadcast_id, BroadcastStatus::Failed)
-    //                                     .await
-    //                                 {
-    //                                     warn!("Failed to update status to FAILED: {}", e);
-    //                                 } else {
-    //                                     broadcast_with_tx.status = BroadcastStatus::Failed;
-    //                                     broadcast_with_tx.error = Some(error_msg.to_string());
-    //                                 }
-    //                             }
-    //                         }
-    //                     }
-    //                     Err(e) => {
-    //                         warn!("Failed to parse script result JSON: {}", e);
-    //                     }
-    //                 },
-    //                 Err(e) => {
-    //                     warn!("Failed to read script_result.json: {}", e);
-    //                 }
-    //             }
-    //             let _ = fs::remove_file("script_result.json");
-    //         }
-    //         Err(e) => {
-    //             warn!("Script file failed: {}", e);
-    //         }
-    //     }
-    // } else {
-    //     info!(
-    //         "Status is {:?}, returning current status without querying blockchain",
-    //         broadcast_with_tx.status
-    //     );
-    // }
 
     let broadcast_with_status = match broadcasts_model
         .find_with_status(broadcast_id.as_str())
@@ -600,16 +517,13 @@ async fn post_payloads(
         body.extend_from_slice(&chunk);
     }
 
-    // Calculate keccak256 hash
     let mut hasher = Keccak256::new();
     hasher.update(&body);
     let result = hasher.finalize();
     let hash = format!("0x{}", hex::encode(result));
 
-    // Convert payload to base64 for storage (since it's binary data)
     let payload_str = general_purpose::STANDARD.encode(&body);
 
-    // Store the payload using the hash as the id
     payloads_model
         .upsert(&hash, &payload_str)
         .await
@@ -634,7 +548,6 @@ async fn get_payload(
 
     match payload_base64 {
         Some(payload_str) => {
-            // Decode base64 back to binary
             let payload_bytes = general_purpose::STANDARD
                 .decode(&payload_str)
                 .map_err(|e| {
@@ -651,6 +564,35 @@ async fn get_payload(
     }
 }
 
+#[post("/contracts/{contract_address}/queries")]
+async fn post_queries(
+    contract_address: web::Path<String>,
+    queries_model: web::Data<QueriesModel>,
+    mut payload: web::Payload,
+) -> Result<HttpResponse, Error> {
+    let mut body = web::BytesMut::new();
+    while let Some(chunk) = payload.next().await {
+        let chunk = chunk?;
+        if (body.len() + chunk.len()) > MAX_SIZE {
+            return Err(error::ErrorBadRequest("overflow"));
+        }
+        body.extend_from_slice(&chunk);
+    }
+
+    let query = serde_json::from_slice::<Value>(&body)?;
+
+    queries_model
+        .upsert(&contract_address, &serde_json::to_string(&query).unwrap())
+        .await
+        .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
+
+    info!(
+        "Stored query for contract: {}",
+        contract_address.into_inner()
+    );
+    Ok(HttpResponse::Ok().json(serde_json::json!({})))
+}
+
 impl Server {
     pub fn new(
         port: u16,
@@ -659,6 +601,7 @@ impl Server {
         events_model: EventsModel,
         broadcasts_model: BroadcastsModel,
         payloads_model: PayloadsModel,
+        queries_model: QueriesModel,
     ) -> Self {
         Self {
             port,
@@ -667,6 +610,7 @@ impl Server {
             events_model,
             broadcasts_model,
             payloads_model,
+            queries_model,
         }
     }
 
@@ -679,6 +623,7 @@ impl Server {
                 .app_data(web::Data::new(self.events_model.clone()))
                 .app_data(web::Data::new(self.broadcasts_model.clone()))
                 .app_data(web::Data::new(self.payloads_model.clone()))
+                .app_data(web::Data::new(self.queries_model.clone()))
                 .service(get_tasks)
                 .service(post_task)
                 .service(address_broadcast)
@@ -686,6 +631,7 @@ impl Server {
                 .service(post_events)
                 .service(post_payloads)
                 .service(get_payload)
+                .service(post_queries)
         })
         .bind(addr)?
         .run()
