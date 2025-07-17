@@ -90,7 +90,12 @@ async fn address_broadcast(
     let broadcast_id = Uuid::new_v4().simple().to_string();
 
     broadcasts_model
-        .insert(&broadcast_id, &broadcast_json, BroadcastStatus::Received)
+        .insert(
+            &broadcast_id,
+            &contract_address,
+            &broadcast_json,
+            BroadcastStatus::Received,
+        )
         .await
         .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
 
@@ -115,7 +120,7 @@ async fn address_broadcast(
             broadcast_json_clone,
             env::var("AXELAR_KEY_NAME").unwrap(),
             env::var("AXELAR_RPC").unwrap(),
-            env::var("AXELAR_CHAIN_ID").unwrap()
+            env::var("CHAIN_ID").unwrap()
         );
 
         let axelard_execute_script = tokio::process::Command::new("bash")
@@ -157,6 +162,7 @@ async fn address_broadcast(
                                     if let Err(e) = broadcasts_model_clone
                                         .upsert(
                                             &broadcast_id_clone,
+                                            &contract_address_clone,
                                             &broadcast_json_clone,
                                             BroadcastStatus::Success,
                                             Some(tx_hash),
@@ -179,6 +185,7 @@ async fn address_broadcast(
                                 if let Err(e) = broadcasts_model_clone
                                     .upsert(
                                         &broadcast_id_clone,
+                                        &contract_address_clone,
                                         &broadcast_json_clone,
                                         BroadcastStatus::Failed,
                                         None,
@@ -191,7 +198,24 @@ async fn address_broadcast(
                             }
                         }
                     } else {
-                        error!("Transaction successful but couldn't parse output as JSON");
+                        error!(
+                            "Transaction execution returned non-JSON output for broadcast {}: {}",
+                            broadcast_id_clone, output_str
+                        );
+
+                        if let Err(e) = broadcasts_model_clone
+                            .upsert(
+                                &broadcast_id_clone,
+                                &contract_address_clone,
+                                &broadcast_json_clone,
+                                BroadcastStatus::Failed,
+                                None,
+                                Some(&output_str),
+                            )
+                            .await
+                        {
+                            error!("Failed to update broadcast status to FAILED: {}", e);
+                        }
                     }
                 } else {
                     let error_str = String::from_utf8_lossy(&output.stderr);
@@ -199,6 +223,20 @@ async fn address_broadcast(
                         "Transaction failed for broadcast {}: {}",
                         broadcast_id_clone, error_str
                     );
+
+                    if let Err(e) = broadcasts_model_clone
+                        .upsert(
+                            &broadcast_id_clone,
+                            &contract_address_clone,
+                            &broadcast_json_clone,
+                            BroadcastStatus::Failed,
+                            None,
+                            Some(&error_str),
+                        )
+                        .await
+                    {
+                        error!("Failed to update broadcast status to FAILED: {}", e);
+                    }
                 }
             }
             Err(e) => {
@@ -206,6 +244,20 @@ async fn address_broadcast(
                     "Transaction execution script failed for broadcast {}: {}",
                     broadcast_id_clone, e
                 );
+
+                if let Err(e) = broadcasts_model_clone
+                    .upsert(
+                        &broadcast_id_clone,
+                        &contract_address_clone,
+                        &broadcast_json_clone,
+                        BroadcastStatus::Failed,
+                        None,
+                        Some(&format!("Script execution failed: {}", e)),
+                    )
+                    .await
+                {
+                    error!("Failed to update broadcast error: {}", e);
+                }
             }
         }
     });
@@ -551,6 +603,12 @@ async fn get_payload(
     }
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+struct QueryPostResponse {
+    #[serde(rename = "queryID")]
+    query_id: String,
+}
+
 #[post("/contracts/{contract_address}/queries")]
 async fn post_queries(
     contract_address: web::Path<String>,
@@ -566,18 +624,144 @@ async fn post_queries(
         body.extend_from_slice(&chunk);
     }
 
-    let query = serde_json::from_slice::<Value>(&body)?;
+    let query_request: Value = serde_json::from_slice(&body)
+        .map_err(|e| error::ErrorBadRequest(format!("Invalid query request: {}", e)))?;
+
+    info!(
+        "Query request: {:?} to contract: {}",
+        query_request, contract_address
+    );
+
+    let query_json = serde_json::to_string(&query_request).map_err(|e| {
+        error::ErrorInternalServerError(format!("Failed to serialize query: {}", e))
+    })?;
+
+    let query_id = Uuid::new_v4().simple().to_string();
 
     queries_model
-        .upsert(&contract_address, &serde_json::to_string(&query).unwrap())
+        .insert(&query_id, &contract_address, &query_json)
         .await
         .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
 
-    info!(
-        "Stored query for contract: {}",
-        contract_address.into_inner()
-    );
-    Ok(HttpResponse::Ok().json(serde_json::json!({})))
+    let query_id_clone = query_id.clone();
+    let contract_address_clone = contract_address.clone();
+    let query_json_clone = query_json.clone();
+    let queries_model_clone = queries_model.clone();
+
+    tokio::spawn(async move {
+        info!("Executing query for {}", query_id_clone);
+
+        let axelard_query_command = format!(
+            "axelard query wasm contract-state smart {} \
+            '{}' \
+            --node {} \
+            --chain-id {} \
+            --output json",
+            contract_address_clone,
+            query_json_clone,
+            env::var("AXELAR_RPC").unwrap(),
+            env::var("CHAIN_ID").unwrap()
+        );
+
+        let axelard_query_result = tokio::process::Command::new("bash")
+            .arg("-c")
+            .arg(axelard_query_command)
+            .output()
+            .await;
+
+        match axelard_query_result {
+            Ok(output) => {
+                let output_str = String::from_utf8_lossy(&output.stdout);
+                info!(
+                    "Query execution output for {}: {}",
+                    query_id_clone, output_str
+                );
+
+                if output.status.success() && !output_str.trim().is_empty() {
+                    if let Err(e) = queries_model_clone
+                        .update_result(&query_id_clone, &output_str, None)
+                        .await
+                    {
+                        error!("Failed to update query result: {}", e);
+                    }
+                } else {
+                    let error_str = if !output_str.trim().is_empty() {
+                        &output_str
+                    } else {
+                        &String::from_utf8_lossy(&output.stderr)
+                    };
+
+                    error!("Query failed for {}: {}", query_id_clone, error_str);
+
+                    if let Err(e) = queries_model_clone
+                        .update_result(&query_id_clone, "", Some(error_str))
+                        .await
+                    {
+                        error!("Failed to update query error: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                error!(
+                    "Query execution script failed for {}: {}",
+                    query_id_clone, e
+                );
+
+                if let Err(e) = queries_model_clone
+                    .update_result(
+                        &query_id_clone,
+                        "",
+                        Some(&format!("Script execution failed: {}", e)),
+                    )
+                    .await
+                {
+                    error!("Failed to update query error: {}", e);
+                }
+            }
+        }
+    });
+
+    let response = QueryPostResponse { query_id };
+
+    info!("Generated query response: {:?}", response);
+    Ok(HttpResponse::Ok().json(response))
+}
+
+#[get("/contracts/{contract_address}/queries/{query_id}")]
+async fn get_query(
+    path: web::Path<(String, String)>,
+    queries_model: web::Data<QueriesModel>,
+) -> Result<HttpResponse, Error> {
+    let (_contract_address, query_id) = path.into_inner();
+
+    let query_result = match queries_model.find_result(query_id.as_str()).await {
+        Ok(result) => result,
+        Err(e) => {
+            let error_response = format!("Database error: {}", e);
+            return Ok(HttpResponse::InternalServerError()
+                .content_type("text/plain")
+                .body(error_response));
+        }
+    };
+
+    match query_result {
+        Some((result, error)) => {
+            if let Some(error_msg) = error {
+                Ok(HttpResponse::BadRequest()
+                    .content_type("text/plain")
+                    .body(error_msg))
+            } else if !result.is_empty() {
+                Ok(HttpResponse::Ok().content_type("text/plain").body(result))
+            } else {
+                Ok(HttpResponse::Accepted()
+                    .content_type("text/plain")
+                    .body("Query processing"))
+            }
+        }
+        None => Ok(HttpResponse::NotFound()
+            .content_type("text/plain")
+            .body("Query not found")),
+    }
 }
 
 impl Server {
@@ -619,6 +803,7 @@ impl Server {
                 .service(post_payloads)
                 .service(get_payload)
                 .service(post_queries)
+                .service(get_query)
         })
         .bind(addr)?
         .run()

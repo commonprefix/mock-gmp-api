@@ -1,13 +1,12 @@
-use crate::gmp_types::BroadcastRequest;
 use serde::{Deserialize, Serialize};
-use serde_json;
+use serde_json::{self, Value};
 use sqlx::{PgPool, Row};
 use tracing::error;
 const PG_TABLE_NAME: &str = "broadcasts";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BroadcastWithTxHash {
-    pub broadcast: BroadcastRequest,
+    pub broadcast: Value,
     pub tx_hash: Option<String>,
     pub status: BroadcastStatus,
     pub error: Option<String>,
@@ -35,7 +34,7 @@ impl BroadcastsModel {
         Ok(Self { pool })
     }
 
-    pub async fn find(&self, id: &str) -> Result<Option<BroadcastRequest>, anyhow::Error> {
+    pub async fn find(&self, id: &str) -> Result<Option<Value>, anyhow::Error> {
         let query = format!("SELECT broadcast FROM {} WHERE id = $1", PG_TABLE_NAME);
         let row = sqlx::query(&query)
             .bind(id)
@@ -45,7 +44,7 @@ impl BroadcastsModel {
         let broadcast = row.and_then(|row| {
             let broadcast_text: String = row.get("broadcast");
 
-            match serde_json::from_str(&broadcast_text) {
+            match serde_json::from_str::<Value>(&broadcast_text) {
                 Ok(broadcast) => Some(broadcast),
                 Err(e) => {
                     error!("Failed to parse broadcast JSON: {:?}", e);
@@ -76,7 +75,7 @@ impl BroadcastsModel {
             let status: BroadcastStatus = row.get("status");
             let error: Option<String> = row.get("error");
 
-            match serde_json::from_str(&broadcast_text) {
+            match serde_json::from_str::<Value>(&broadcast_text) {
                 Ok(broadcast) => Some(BroadcastWithTxHash {
                     broadcast,
                     tx_hash,
@@ -96,16 +95,18 @@ impl BroadcastsModel {
     pub async fn insert(
         &self,
         id: &str,
+        contract_address: &str,
         broadcast: &str,
         status: BroadcastStatus,
     ) -> Result<(), anyhow::Error> {
         let query = format!(
-            "INSERT INTO {} (id, broadcast, status) VALUES ($1, $2, $3)",
+            "INSERT INTO {} (id, contract_address, broadcast, status) VALUES ($1, $2, $3, $4)",
             PG_TABLE_NAME
         );
 
         sqlx::query(&query)
             .bind(id)
+            .bind(contract_address)
             .bind(broadcast)
             .bind(status)
             .execute(&self.pool)
@@ -117,18 +118,20 @@ impl BroadcastsModel {
     pub async fn upsert(
         &self,
         id: &str,
+        contract_address: &str,
         broadcast: &str,
         status: BroadcastStatus,
         tx_hash: Option<&str>,
         error: Option<&str>,
     ) -> Result<(), anyhow::Error> {
         let query = format!(
-            "INSERT INTO {} (id, broadcast, status, tx_hash, error) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO UPDATE SET broadcast = $2, status = $3, tx_hash = $4, error = $5",
+            "INSERT INTO {} (id, contract_address, broadcast, status, tx_hash, error) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO UPDATE SET contract_address = $2, broadcast = $3, status = $4, tx_hash = $5, error = $6",
             PG_TABLE_NAME
         );
 
         sqlx::query(&query)
             .bind(id)
+            .bind(contract_address)
             .bind(broadcast)
             .bind(status)
             .bind(tx_hash)
