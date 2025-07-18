@@ -50,13 +50,18 @@ struct BroadcastPostResponse {
 struct BroadcastGetResponse {
     status: BroadcastStatus,
     #[serde(rename = "txHash")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     tx_hash: Option<String>,
     #[serde(rename = "txEvents")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     tx_events: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
     #[serde(rename = "completedAt")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     completed_at: Option<DateTime<Utc>>,
     #[serde(rename = "receivedAt")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     received_at: Option<DateTime<Utc>>,
 }
 
@@ -104,11 +109,10 @@ async fn address_broadcast(
     let broadcast_json_clone = broadcast_json.clone();
     let broadcasts_model_clone = broadcasts_model.clone();
 
-    tokio::spawn(async move {
-        info!("Executing broadcast transaction for {}", broadcast_id_clone);
+    info!("Executing broadcast transaction for {}", broadcast_id_clone);
 
-        let axelard_execute_script_str = format!(
-            "axelard tx wasm execute {} \
+    let axelard_execute_script_str = format!(
+        "axelard tx wasm execute {} \
         '{}' \
   --from {} \
   --keyring-backend test \
@@ -116,91 +120,70 @@ async fn address_broadcast(
   --chain-id {} \
   --gas-prices 0.00005uamplifier \
   --gas auto --gas-adjustment 1.5 --output json",
-            contract_address_clone,
-            broadcast_json_clone,
-            env::var("AXELAR_KEY_NAME").unwrap(),
-            env::var("AXELAR_RPC").unwrap(),
-            env::var("CHAIN_ID").unwrap()
-        );
+        contract_address_clone,
+        broadcast_json_clone,
+        env::var("AXELAR_KEY_NAME").unwrap(),
+        env::var("AXELAR_RPC").unwrap(),
+        env::var("CHAIN_ID").unwrap()
+    );
 
-        let axelard_execute_script = tokio::process::Command::new("bash")
-            .arg("-c")
-            .arg(axelard_execute_script_str)
-            .output()
-            .await;
+    let axelard_execute_script = tokio::process::Command::new("bash")
+        .arg("-c")
+        .arg(axelard_execute_script_str)
+        .output()
+        .await;
 
-        match axelard_execute_script {
-            Ok(output) => {
-                let output_str = String::from_utf8_lossy(&output.stdout);
-                info!(
-                    "Transaction execution output for broadcast {}: {}",
-                    broadcast_id_clone, output_str
-                );
+    match axelard_execute_script {
+        Ok(output) => {
+            let output_str = String::from_utf8_lossy(&output.stdout);
+            info!(
+                "Transaction execution output for broadcast {}: {}",
+                broadcast_id_clone, output_str
+            );
 
-                if output.status.success() {
-                    if let Ok(script_result) =
-                        serde_json::from_str::<serde_json::Value>(&output_str)
-                    {
-                        let axelar_status = script_result
-                            .get("status")
+            if output.status.success() {
+                if let Ok(script_result) = serde_json::from_str::<Value>(&output_str) {
+                    let code = script_result
+                        .get("code")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(-1);
+
+                    if code == 0 {
+                        let tx_hash = script_result
+                            .get("txhash")
                             .and_then(|v| v.as_str())
-                            .unwrap_or("FAILED");
+                            .unwrap_or("");
 
-                        match axelar_status {
-                            "SUCCESS" => {
-                                let tx_hash = script_result
-                                    .get("txHash")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("");
+                        info!(
+                            "Transaction successful for broadcast {}, tx_hash: {}",
+                            broadcast_id_clone, tx_hash
+                        );
 
-                                info!(
-                                    "Transaction successful for broadcast {}, tx_hash: {}",
-                                    broadcast_id_clone, tx_hash
-                                );
-
-                                if !tx_hash.is_empty() {
-                                    if let Err(e) = broadcasts_model_clone
-                                        .upsert(
-                                            &broadcast_id_clone,
-                                            &contract_address_clone,
-                                            &broadcast_json_clone,
-                                            BroadcastStatus::Success,
-                                            Some(tx_hash),
-                                            None,
-                                        )
-                                        .await
-                                    {
-                                        error!("Failed to update transaction hash: {}", e);
-                                    }
-                                } else {
-                                    warn!("Transaction successful but no tx hash found");
-                                }
+                        if !tx_hash.is_empty() {
+                            if let Err(e) = broadcasts_model_clone
+                                .upsert(
+                                    &broadcast_id_clone,
+                                    &contract_address_clone,
+                                    &broadcast_json_clone,
+                                    BroadcastStatus::Success,
+                                    Some(tx_hash),
+                                    None,
+                                )
+                                .await
+                            {
+                                error!("Failed to update transaction hash: {}", e);
                             }
-                            _ => {
-                                warn!(
-                                    "Transaction failed for broadcast {}: {}",
-                                    broadcast_id_clone, axelar_status
-                                );
-
-                                if let Err(e) = broadcasts_model_clone
-                                    .upsert(
-                                        &broadcast_id_clone,
-                                        &contract_address_clone,
-                                        &broadcast_json_clone,
-                                        BroadcastStatus::Failed,
-                                        None,
-                                        Some(&String::from_utf8_lossy(&output.stdout)),
-                                    )
-                                    .await
-                                {
-                                    error!("Failed to update broadcast status to FAILED: {}", e);
-                                }
-                            }
+                        } else {
+                            warn!("Transaction successful but no tx hash found");
                         }
                     } else {
-                        error!(
-                            "Transaction execution returned non-JSON output for broadcast {}: {}",
-                            broadcast_id_clone, output_str
+                        let raw_log = script_result
+                            .get("raw_log")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(&output_str);
+                        warn!(
+                            "Transaction failed for broadcast {}: {}",
+                            broadcast_id_clone, raw_log
                         );
 
                         if let Err(e) = broadcasts_model_clone
@@ -210,7 +193,7 @@ async fn address_broadcast(
                                 &broadcast_json_clone,
                                 BroadcastStatus::Failed,
                                 None,
-                                Some(&output_str),
+                                Some(raw_log),
                             )
                             .await
                         {
@@ -218,10 +201,9 @@ async fn address_broadcast(
                         }
                     }
                 } else {
-                    let error_str = String::from_utf8_lossy(&output.stderr);
                     error!(
-                        "Transaction failed for broadcast {}: {}",
-                        broadcast_id_clone, error_str
+                        "Transaction execution returned non-JSON output for broadcast {}: {}",
+                        broadcast_id_clone, output_str
                     );
 
                     if let Err(e) = broadcasts_model_clone
@@ -231,18 +213,18 @@ async fn address_broadcast(
                             &broadcast_json_clone,
                             BroadcastStatus::Failed,
                             None,
-                            Some(&error_str),
+                            Some(&output_str),
                         )
                         .await
                     {
                         error!("Failed to update broadcast status to FAILED: {}", e);
                     }
                 }
-            }
-            Err(e) => {
+            } else {
+                let error_str = String::from_utf8_lossy(&output.stderr);
                 error!(
-                    "Transaction execution script failed for broadcast {}: {}",
-                    broadcast_id_clone, e
+                    "Transaction failed for broadcast {}: {}",
+                    broadcast_id_clone, error_str
                 );
 
                 if let Err(e) = broadcasts_model_clone
@@ -252,15 +234,35 @@ async fn address_broadcast(
                         &broadcast_json_clone,
                         BroadcastStatus::Failed,
                         None,
-                        Some(&format!("Script execution failed: {}", e)),
+                        Some(&error_str),
                     )
                     .await
                 {
-                    error!("Failed to update broadcast error: {}", e);
+                    error!("Failed to update broadcast status to FAILED: {}", e);
                 }
             }
         }
-    });
+        Err(e) => {
+            error!(
+                "Transaction execution script failed for broadcast {}: {}",
+                broadcast_id_clone, e
+            );
+
+            if let Err(e) = broadcasts_model_clone
+                .upsert(
+                    &broadcast_id_clone,
+                    &contract_address_clone,
+                    &broadcast_json_clone,
+                    BroadcastStatus::Failed,
+                    None,
+                    Some(&format!("Script execution failed: {}", e)),
+                )
+                .await
+            {
+                error!("Failed to update broadcast error: {}", e);
+            }
+        }
+    }
 
     let response = BroadcastPostResponse { broadcast_id };
 
@@ -297,7 +299,7 @@ async fn get_broadcast(
 
     let broadcast_with_status = broadcast_with_status.unwrap();
 
-    let response = match broadcast_with_status.status {
+    let response: BroadcastGetResponse = match broadcast_with_status.status {
         BroadcastStatus::Received => BroadcastGetResponse {
             status: BroadcastStatus::Received,
             tx_hash: None,
@@ -648,78 +650,76 @@ async fn post_queries(
     let query_json_clone = query_json.clone();
     let queries_model_clone = queries_model.clone();
 
-    tokio::spawn(async move {
-        info!("Executing query for {}", query_id_clone);
+    info!("Executing query for {}", query_id_clone);
 
-        let axelard_query_command = format!(
-            "axelard query wasm contract-state smart {} \
+    let axelard_query_command = format!(
+        "axelard query wasm contract-state smart {} \
             '{}' \
             --node {} \
             --chain-id {} \
             --output json",
-            contract_address_clone,
-            query_json_clone,
-            env::var("AXELAR_RPC").unwrap(),
-            env::var("CHAIN_ID").unwrap()
-        );
+        contract_address_clone,
+        query_json_clone,
+        env::var("AXELAR_RPC").unwrap(),
+        env::var("CHAIN_ID").unwrap()
+    );
 
-        let axelard_query_result = tokio::process::Command::new("bash")
-            .arg("-c")
-            .arg(axelard_query_command)
-            .output()
-            .await;
+    let axelard_query_result = tokio::process::Command::new("bash")
+        .arg("-c")
+        .arg(axelard_query_command)
+        .output()
+        .await;
 
-        match axelard_query_result {
-            Ok(output) => {
-                let output_str = String::from_utf8_lossy(&output.stdout);
-                info!(
-                    "Query execution output for {}: {}",
-                    query_id_clone, output_str
-                );
+    match axelard_query_result {
+        Ok(output) => {
+            let output_str = String::from_utf8_lossy(&output.stdout);
+            info!(
+                "Query execution output for {}: {}",
+                query_id_clone, output_str
+            );
 
-                if output.status.success() && !output_str.trim().is_empty() {
-                    if let Err(e) = queries_model_clone
-                        .update_result(&query_id_clone, &output_str, None)
-                        .await
-                    {
-                        error!("Failed to update query result: {}", e);
-                    }
-                } else {
-                    let error_str = if !output_str.trim().is_empty() {
-                        &output_str
-                    } else {
-                        &String::from_utf8_lossy(&output.stderr)
-                    };
-
-                    error!("Query failed for {}: {}", query_id_clone, error_str);
-
-                    if let Err(e) = queries_model_clone
-                        .update_result(&query_id_clone, "", Some(error_str))
-                        .await
-                    {
-                        error!("Failed to update query error: {}", e);
-                    }
+            if output.status.success() && !output_str.trim().is_empty() {
+                if let Err(e) = queries_model_clone
+                    .update_result(&query_id_clone, &output_str, None)
+                    .await
+                {
+                    error!("Failed to update query result: {}", e);
                 }
-            }
-            Err(e) => {
-                error!(
-                    "Query execution script failed for {}: {}",
-                    query_id_clone, e
-                );
+            } else {
+                let error_str = if !output_str.trim().is_empty() {
+                    &output_str
+                } else {
+                    &String::from_utf8_lossy(&output.stderr)
+                };
+
+                error!("Query failed for {}: {}", query_id_clone, error_str);
 
                 if let Err(e) = queries_model_clone
-                    .update_result(
-                        &query_id_clone,
-                        "",
-                        Some(&format!("Script execution failed: {}", e)),
-                    )
+                    .update_result(&query_id_clone, "", Some(error_str))
                     .await
                 {
                     error!("Failed to update query error: {}", e);
                 }
             }
         }
-    });
+        Err(e) => {
+            error!(
+                "Query execution script failed for {}: {}",
+                query_id_clone, e
+            );
+
+            if let Err(e) = queries_model_clone
+                .update_result(
+                    &query_id_clone,
+                    "",
+                    Some(&format!("Script execution failed: {}", e)),
+                )
+                .await
+            {
+                error!("Failed to update query error: {}", e);
+            }
+        }
+    }
 
     let response = QueryPostResponse { query_id };
 

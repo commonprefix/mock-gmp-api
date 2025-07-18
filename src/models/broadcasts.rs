@@ -19,6 +19,7 @@ pub struct BroadcastsModel {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "broadcast_status")]
+#[serde(rename_all = "UPPERCASE")]
 pub enum BroadcastStatus {
     #[sqlx(rename = "RECEIVED")]
     Received,

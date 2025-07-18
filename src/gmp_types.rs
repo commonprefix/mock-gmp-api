@@ -1,8 +1,56 @@
 use core::fmt;
 use std::collections::HashMap;
 
+use serde::de::{self, Deserializer, Visitor};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+// Add a deserializer that turns either a string or a number into a String
+fn string_or_number<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct StringOrNumberVisitor;
+
+    impl<'de> Visitor<'de> for StringOrNumberVisitor {
+        type Value = String;
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a string or a number")
+        }
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(v.to_owned())
+        }
+        fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(v)
+        }
+        fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(v.to_string())
+        }
+        fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(v.to_string())
+        }
+        fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(v.to_string())
+        }
+    }
+
+    deserializer.deserialize_any(StringOrNumberVisitor)
+}
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct GatewayV2Message {
@@ -28,6 +76,9 @@ impl GatewayV2Message {
 pub struct Amount {
     #[serde(rename = "tokenID")]
     pub token_id: Option<String>,
+    #[serde(rename = "amount")]
+    #[serde(alias = "drops")]
+    #[serde(deserialize_with = "string_or_number")]
     pub amount: String,
 }
 
