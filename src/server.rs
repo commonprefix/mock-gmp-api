@@ -2,11 +2,13 @@ use actix_web::{App, Error, HttpResponse, HttpServer, error, get, post, web};
 use base64::{Engine as _, engine::general_purpose};
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha3::{Digest, Keccak256};
 use std::collections::HashMap;
 use std::env;
+use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -22,6 +24,8 @@ use crate::{
     },
     utils::parse_task,
 };
+
+static AXELARD_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 pub struct Server {
     pub port: u16,
@@ -126,6 +130,12 @@ async fn address_broadcast(
         env::var("AXELAR_RPC").unwrap(),
         env::var("CHAIN_ID").unwrap()
     );
+
+    info!(
+        "Waiting for axelard lock for broadcast {}",
+        broadcast_id_clone
+    );
+    let _guard = AXELARD_LOCK.lock().await;
 
     let axelard_execute_script = tokio::process::Command::new("bash")
         .arg("-c")
@@ -734,30 +744,46 @@ async fn get_query(
 ) -> Result<HttpResponse, Error> {
     let (_contract_address, query_id) = path.into_inner();
 
-    let query_result = match queries_model.find_result(query_id.as_str()).await {
-        Ok(result) => result,
+    let query_result = match queries_model.find_result(&query_id).await {
+        Ok(q) => q,
         Err(e) => {
-            let error_response = format!("Database error: {}", e);
+            let err = format!("Database error: {}", e);
             return Ok(HttpResponse::InternalServerError()
                 .content_type("text/plain")
-                .body(error_response));
+                .body(err));
         }
     };
 
     match query_result {
         Some((result, error)) => {
-            if let Some(error_msg) = error {
-                Ok(HttpResponse::BadRequest()
+            if let Some(err_msg) = error {
+                return Ok(HttpResponse::BadRequest()
                     .content_type("text/plain")
-                    .body(error_msg))
-            } else if !result.is_empty() {
-                Ok(HttpResponse::Ok().content_type("text/plain").body(result))
-            } else {
-                Ok(HttpResponse::Accepted()
-                    .content_type("text/plain")
-                    .body("Query processing"))
+                    .body(err_msg));
             }
+
+            if !result.is_empty() {
+                let mut body = result.clone();
+                if body.contains("\"interchain_transfer\"") && !body.contains("\"token_id\"") {
+                    if let Some(start) = body.find("\"interchain_transfer\"") {
+                        if let Some(brace) = body[start..].find('{') {
+                            let insert_at = start + brace + 1;
+                            body = format!(
+                                "{}\"token_id\":null,{}",
+                                &body[..insert_at],
+                                &body[insert_at..]
+                            );
+                        }
+                    }
+                }
+                return Ok(HttpResponse::Ok().content_type("text/plain").body(body));
+            }
+
+            Ok(HttpResponse::Accepted()
+                .content_type("text/plain")
+                .body("Query processing"))
         }
+
         None => Ok(HttpResponse::NotFound()
             .content_type("text/plain")
             .body("Query not found")),
