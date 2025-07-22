@@ -401,7 +401,7 @@ async fn post_events(
             .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
         if maybe_event_with_same_id.is_some() {
             results.push(PostEventResult {
-                status: "ACCEPTED".to_string(),
+                status: "REJECTED".to_string(),
                 index,
                 error: None,
                 retriable: None,
@@ -414,10 +414,10 @@ async fn post_events(
             Ok(json_str) => json_str,
             Err(e) => {
                 results.push(PostEventResult {
-                    status: "error".to_string(),
+                    status: "REJECTED".to_string(),
                     index,
                     error: Some(format!("Failed to serialize event: {}", e)),
-                    retriable: Some(true),
+                    retriable: None,
                 });
                 continue;
             }
@@ -427,10 +427,10 @@ async fn post_events(
             Ok(ts) => ts,
             Err(e) => {
                 results.push(PostEventResult {
-                    status: "error".to_string(),
+                    status: "REJECTED".to_string(),
                     index,
                     error: Some(format!("Invalid timestamp format: {}", e)),
-                    retriable: Some(true),
+                    retriable: None,
                 });
                 continue;
             }
@@ -469,10 +469,10 @@ async fn post_events(
             }
             Err(e) => {
                 results.push(PostEventResult {
-                    status: "error".to_string(),
+                    status: "REJECTED".to_string(),
                     index,
                     error: Some(format!("Database error: {}", e)),
-                    retriable: Some(true),
+                    retriable: None,
                 });
             }
         }
