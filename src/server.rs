@@ -20,7 +20,6 @@ use crate::{
         broadcasts::{BroadcastStatus, BroadcastsModel},
         events::EventsModel,
         payloads::PayloadsModel,
-        queries::QueriesModel,
     },
     utils::parse_task,
 };
@@ -34,7 +33,6 @@ pub struct Server {
     pub events_model: EventsModel,
     pub broadcasts_model: BroadcastsModel,
     pub payloads_model: PayloadsModel,
-    pub queries_model: QueriesModel,
 }
 
 const MAX_SIZE: usize = 262_144; // max payload size is 256k
@@ -624,7 +622,6 @@ struct QueryPostResponse {
 #[post("/contracts/{contract_address}/queries")]
 async fn post_queries(
     contract_address: web::Path<String>,
-    queries_model: web::Data<QueriesModel>,
     mut payload: web::Payload,
 ) -> Result<HttpResponse, Error> {
     let mut body = web::BytesMut::new();
@@ -648,19 +645,7 @@ async fn post_queries(
         error::ErrorInternalServerError(format!("Failed to serialize query: {}", e))
     })?;
 
-    let query_id = Uuid::new_v4().simple().to_string();
-
-    queries_model
-        .insert(&query_id, &contract_address, &query_json)
-        .await
-        .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
-
-    let query_id_clone = query_id.clone();
-    let contract_address_clone = contract_address.clone();
-    let query_json_clone = query_json.clone();
-    let queries_model_clone = queries_model.clone();
-
-    info!("Executing query for {}", query_id_clone);
+    debug!("Executing axelard query for contract: {}", contract_address);
 
     let axelard_query_command = format!(
         "axelard query wasm contract-state smart {} \
@@ -668,8 +653,8 @@ async fn post_queries(
             --node {} \
             --chain-id {} \
             --output json",
-        contract_address_clone,
-        query_json_clone,
+        contract_address,
+        query_json,
         env::var("AXELAR_RPC").unwrap(),
         env::var("CHAIN_ID").unwrap()
     );
@@ -682,111 +667,64 @@ async fn post_queries(
 
     match axelard_query_result {
         Ok(output) => {
-            let output_str = String::from_utf8_lossy(&output.stdout);
-            info!(
-                "Query execution output for {}: {}",
-                query_id_clone, output_str
-            );
+            if output.status.success() {
+                let output_str = String::from_utf8_lossy(&output.stdout);
+                info!(
+                    "Query executed successfully for contract: {}",
+                    contract_address
+                );
 
-            if output.status.success() && !output_str.trim().is_empty() {
-                if let Err(e) = queries_model_clone
-                    .update_result(&query_id_clone, &output_str, None)
-                    .await
-                {
-                    error!("Failed to update query result: {}", e);
+                if output_str.trim().is_empty() {
+                    return Ok(HttpResponse::Ok().content_type("text/plain").body("{}"));
+                }
+
+                match serde_json::from_str::<Value>(&output_str) {
+                    Ok(json_value) => {
+                        let response_data = json_value.get("data").unwrap_or(&json_value);
+
+                        match serde_json::to_string(response_data) {
+                            Ok(serialized) => Ok(HttpResponse::Ok()
+                                .content_type("text/plain")
+                                .body(serialized)),
+                            Err(e) => {
+                                error!("Failed to serialize response: {}", e);
+                                Ok(HttpResponse::Ok()
+                                    .content_type("text/plain")
+                                    .body(output_str.to_string()))
+                            }
+                        }
+                    }
+                    Err(_) => Ok(HttpResponse::Ok()
+                        .content_type("text/plain")
+                        .body(output_str.to_string())),
                 }
             } else {
-                let error_str = if !output_str.trim().is_empty() {
-                    &output_str
+                let error_str = if !output.stdout.is_empty() {
+                    String::from_utf8_lossy(&output.stdout)
                 } else {
-                    &String::from_utf8_lossy(&output.stderr)
+                    String::from_utf8_lossy(&output.stderr)
                 };
 
-                error!("Query failed for {}: {}", query_id_clone, error_str);
-
-                if let Err(e) = queries_model_clone
-                    .update_result(&query_id_clone, "", Some(error_str))
-                    .await
-                {
-                    error!("Failed to update query error: {}", e);
-                }
+                error!(
+                    "Query failed for contract {}: {}",
+                    contract_address, error_str
+                );
+                Err(error::ErrorBadRequest(format!(
+                    "Query failed: {}",
+                    error_str
+                )))
             }
         }
         Err(e) => {
             error!(
-                "Query execution script failed for {}: {}",
-                query_id_clone, e
+                "Query execution failed for contract {}: {}",
+                contract_address, e
             );
-
-            if let Err(e) = queries_model_clone
-                .update_result(
-                    &query_id_clone,
-                    "",
-                    Some(&format!("Script execution failed: {}", e)),
-                )
-                .await
-            {
-                error!("Failed to update query error: {}", e);
-            }
+            Err(error::ErrorInternalServerError(format!(
+                "Failed to execute query: {}",
+                e
+            )))
         }
-    }
-
-    let response = QueryPostResponse { query_id };
-
-    info!("Generated query response: {:?}", response);
-    Ok(HttpResponse::Ok().json(response))
-}
-
-#[get("/contracts/{contract_address}/queries/{query_id}")]
-async fn get_query(
-    path: web::Path<(String, String)>,
-    queries_model: web::Data<QueriesModel>,
-) -> Result<HttpResponse, Error> {
-    let (_contract_address, query_id) = path.into_inner();
-
-    let query_result = match queries_model.find_result(&query_id).await {
-        Ok(q) => q,
-        Err(e) => {
-            let err = format!("Database error: {}", e);
-            return Ok(HttpResponse::InternalServerError()
-                .content_type("text/plain")
-                .body(err));
-        }
-    };
-
-    match query_result {
-        Some((result, error)) => {
-            if let Some(err_msg) = error {
-                return Ok(HttpResponse::BadRequest()
-                    .content_type("text/plain")
-                    .body(err_msg));
-            }
-
-            if !result.is_empty() {
-                let mut body = result.clone();
-                if body.contains("\"interchain_transfer\"") && !body.contains("\"token_id\"") {
-                    if let Some(start) = body.find("\"interchain_transfer\"") {
-                        if let Some(brace) = body[start..].find('{') {
-                            let insert_at = start + brace + 1;
-                            body = format!(
-                                "{}\"token_id\":null,{}",
-                                &body[..insert_at],
-                                &body[insert_at..]
-                            );
-                        }
-                    }
-                }
-                return Ok(HttpResponse::Ok().content_type("text/plain").body(body));
-            }
-
-            Ok(HttpResponse::Accepted()
-                .content_type("text/plain")
-                .body("Query processing"))
-        }
-
-        None => Ok(HttpResponse::NotFound()
-            .content_type("text/plain")
-            .body("Query not found")),
     }
 }
 
@@ -798,7 +736,6 @@ impl Server {
         events_model: EventsModel,
         broadcasts_model: BroadcastsModel,
         payloads_model: PayloadsModel,
-        queries_model: QueriesModel,
     ) -> Self {
         Self {
             port,
@@ -807,7 +744,6 @@ impl Server {
             events_model,
             broadcasts_model,
             payloads_model,
-            queries_model,
         }
     }
 
@@ -820,7 +756,6 @@ impl Server {
                 .app_data(web::Data::new(self.events_model.clone()))
                 .app_data(web::Data::new(self.broadcasts_model.clone()))
                 .app_data(web::Data::new(self.payloads_model.clone()))
-                .app_data(web::Data::new(self.queries_model.clone()))
                 .service(get_tasks)
                 .service(post_task)
                 .service(address_broadcast)
@@ -829,7 +764,6 @@ impl Server {
                 .service(post_payloads)
                 .service(get_payload)
                 .service(post_queries)
-                .service(get_query)
         })
         .bind(addr)?
         .run()
