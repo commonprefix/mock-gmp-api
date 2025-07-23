@@ -399,7 +399,7 @@ async fn post_events(
             .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
         if maybe_event_with_same_id.is_some() {
             results.push(PostEventResult {
-                status: "REJECTED".to_string(),
+                status: "ACCEPTED".to_string(),
                 index,
                 error: None,
                 retriable: None,
