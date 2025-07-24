@@ -21,6 +21,8 @@ sha3 = "0.10"
 hex = "0.4"
 base64 = "0.22"
 once_cell = "1.17"
+lapin = "3.0.0"
+async-trait = "0.1.88"
 
 [dev-dependencies]
 mockall = "0.13.1"
@@ -35,3 +37,7 @@ name = "client"
 [[bin]]
 path = "src/bin/server_main.rs"
 name = "server"
+
+[[bin]]
+path = "src/bin/subscriber_main.rs"
+name = "subscriber"

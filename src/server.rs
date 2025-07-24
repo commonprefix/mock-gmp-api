@@ -94,6 +94,24 @@ async fn address_broadcast(
         error::ErrorInternalServerError(format!("Failed to serialize broadcast: {}", e))
     })?;
 
+    let maybe_verify_messages_json = broadcast_request.get("verify_messages");
+
+    let maybe_construct_proof_json = broadcast_request.get("construct_proof");
+
+    // check if its construct_proof or verify_messages
+
+    // verify_messages -> check script output for poll started event (could not exist if its second time)
+    // get poll_id from the event's attributes, and the contract adddress from which the event was emitted (contract in verify messages is the voting verifier)
+    // open a thread/task that polls the voting verifier and searches for a quorum_reached_event with the same poll_id.
+    // with this event I need to construct the Task ReactToWasmEvent and put it in tasks model
+
+    // construct proof has similar logic for different events, poll_started -> signing_started, poll_id -> session_id,  quorum_reached -> signing_completed
+    // Instead of react_to_wasm_event we need to do a smart contract call (tbd)
+
+    // axelard command to get just 1, see how many pages exist. Page numbers start from 1. Check total_count / 100 is the number of pages (other pages have bug)
+    // start from last page, bring them 100 at a time, search for event.
+    // make it generic
+
     let broadcast_id = Uuid::new_v4().simple().to_string();
 
     broadcasts_model
