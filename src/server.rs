@@ -21,7 +21,8 @@ use crate::{
         events::EventsModel,
         payloads::PayloadsModel,
     },
-    utils::parse_task,
+    queue::{LapinConnection, QueueItem, QueueTrait, VerifyMessagesItem},
+    utils::{extract_id_and_contract_address, parse_task},
 };
 
 static AXELARD_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
@@ -33,6 +34,7 @@ pub struct Server {
     pub events_model: EventsModel,
     pub broadcasts_model: BroadcastsModel,
     pub payloads_model: PayloadsModel,
+    pub queue: LapinConnection,
 }
 
 const MAX_SIZE: usize = 262_144; // max payload size is 256k
@@ -71,6 +73,7 @@ struct BroadcastGetResponse {
 async fn address_broadcast(
     contract_address: web::Path<String>,
     broadcasts_model: web::Data<BroadcastsModel>,
+    queue: web::Data<LapinConnection>,
     mut payload: web::Payload,
 ) -> Result<HttpResponse, Error> {
     let mut body = web::BytesMut::new();
@@ -94,15 +97,11 @@ async fn address_broadcast(
         error::ErrorInternalServerError(format!("Failed to serialize broadcast: {}", e))
     })?;
 
-    let maybe_verify_messages_json = broadcast_request.get("verify_messages");
-
-    let maybe_construct_proof_json = broadcast_request.get("construct_proof");
-
-    // check if its construct_proof or verify_messages
+    // check if it's construct_proof or verify_messages
 
     // verify_messages -> check script output for poll started event (could not exist if its second time)
     // get poll_id from the event's attributes, and the contract adddress from which the event was emitted (contract in verify messages is the voting verifier)
-    // open a thread/task that polls the voting verifier and searches for a quorum_reached_event with the same poll_id.
+    // call a service (by writing in queue) that polls the voting verifier and searches for a quorum_reached_event with the same poll_id.
     // with this event I need to construct the Task ReactToWasmEvent and put it in tasks model
 
     // construct proof has similar logic for different events, poll_started -> signing_started, poll_id -> session_id,  quorum_reached -> signing_completed
@@ -184,6 +183,44 @@ async fn address_broadcast(
                             "Transaction successful for broadcast {}, tx_hash: {}",
                             broadcast_id_clone, tx_hash
                         );
+
+                        let maybe_verify_messages_json = broadcast_request.get("verify_messages");
+
+                        if maybe_verify_messages_json.is_some() {
+                            let maybe_poll_id_and_contract_address =
+                                extract_id_and_contract_address(
+                                    &script_result,
+                                    "wasm-messages_poll_started",
+                                )
+                                .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
+                            if let Some((poll_id, contract_address)) =
+                                maybe_poll_id_and_contract_address
+                            {
+                                debug!(
+                                    "Publishing verify messages for poll_id: {:?}, contract_address: {:?}",
+                                    poll_id, contract_address
+                                );
+                                queue
+                                    .publish(
+                                        &QueueItem::VerifyMessages(VerifyMessagesItem {
+                                            poll_id,
+                                            contract_address,
+                                        }),
+                                        None,
+                                    )
+                                    .await
+                                    .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
+                            } else {
+                                warn!(
+                                    "No poll_id and contract_address extracted from script result"
+                                );
+                            }
+                        }
+
+                        let maybe_construct_proof_json = broadcast_request.get("construct_proof");
+                        if let Some(construct_proof_json) = maybe_construct_proof_json {
+                            info!("Construct proof: {:?}", construct_proof_json);
+                        }
 
                         if !tx_hash.is_empty() {
                             if let Err(e) = broadcasts_model_clone
@@ -754,6 +791,7 @@ impl Server {
         events_model: EventsModel,
         broadcasts_model: BroadcastsModel,
         payloads_model: PayloadsModel,
+        queue: LapinConnection,
     ) -> Self {
         Self {
             port,
@@ -762,6 +800,7 @@ impl Server {
             events_model,
             broadcasts_model,
             payloads_model,
+            queue,
         }
     }
 
@@ -774,6 +813,7 @@ impl Server {
                 .app_data(web::Data::new(self.events_model.clone()))
                 .app_data(web::Data::new(self.broadcasts_model.clone()))
                 .app_data(web::Data::new(self.payloads_model.clone()))
+                .app_data(web::Data::new(self.queue.clone()))
                 .service(get_tasks)
                 .service(post_task)
                 .service(address_broadcast)

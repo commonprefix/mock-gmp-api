@@ -1,6 +1,6 @@
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use tracing::level_filters::LevelFilter;
+use tracing::{debug, error, info, level_filters::LevelFilter};
 use tracing_subscriber::{Registry, fmt, prelude::*};
 
 use crate::gmp_types::{
@@ -66,4 +66,60 @@ pub fn setup_logging() {
 
     tracing::subscriber::set_global_default(gmp_api)
         .expect("Failed to set global tracing subscriber");
+}
+
+pub fn extract_id_and_contract_address(
+    script_result: &Value,
+    event_type: &str,
+) -> Result<Option<(String, String)>, anyhow::Error> {
+    let logs = script_result
+        .get("logs")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| {
+            error!("Logs not found in verify messages");
+            anyhow::anyhow!("Logs not found in verify messages")
+        })?;
+    for log in logs {
+        let events = log
+            .get("events")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| {
+                error!("Events not found in log");
+                anyhow::anyhow!("Events not found in log")
+            })?;
+
+        for event in events {
+            let parsed_event_type = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            if parsed_event_type == event_type {
+                debug!("Poll started event found");
+                debug!("Event: {:?}", event);
+                let attributes = event
+                    .get("attributes")
+                    .and_then(|v| v.as_array())
+                    .ok_or_else(|| {
+                        error!("Attributes not found in event");
+                        anyhow::anyhow!("Attributes not found in event")
+                    })?;
+                let poll_id = attributes
+                    .iter()
+                    .find(|attr| {
+                        attr.get("key").and_then(|v| v.as_str()).unwrap_or("") == "poll_id"
+                    })
+                    .and_then(|attr| attr.get("value").and_then(|v| v.as_str()))
+                    .unwrap_or("");
+                let contract_address = attributes
+                    .iter()
+                    .find(|attr| {
+                        attr.get("key").and_then(|v| v.as_str()).unwrap_or("")
+                            == "_contract_address"
+                    })
+                    .and_then(|attr| attr.get("value").and_then(|v| v.as_str()))
+                    .unwrap_or("");
+                if poll_id != "" && contract_address != "" {
+                    return Ok(Some((poll_id.to_string(), contract_address.to_string())));
+                }
+            }
+        }
+    }
+    Ok(None)
 }
