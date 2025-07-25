@@ -1,10 +1,7 @@
 use crate::{
-    gmp_types::Event,
     models::tasks::TasksModel,
     queue::{ConstructProofItem, QueueItem, QueueTrait, VerifyMessagesItem},
-    utils::extract_id_and_contract_address,
 };
-use base64::{Engine as _, engine::general_purpose};
 use futures::StreamExt;
 use lapin::{Consumer, options::BasicAckOptions};
 use serde_json::Value;
