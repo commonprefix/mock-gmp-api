@@ -1,6 +1,6 @@
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use tracing::{debug, error, info, level_filters::LevelFilter};
+use tracing::{debug, error, level_filters::LevelFilter};
 use tracing_subscriber::{Registry, fmt, prelude::*};
 
 use crate::gmp_types::{

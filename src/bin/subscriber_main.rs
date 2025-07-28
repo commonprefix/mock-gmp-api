@@ -12,10 +12,9 @@ async fn main() -> anyhow::Result<()> {
 
     let queue = LapinConnection::new(&addr, "mock_gmp_api").await?;
     let database = TasksModel::new(&std::env::var("POSTGRES_URL").unwrap()).await?;
-    let chain_id: String = std::env::var("CHAIN_ID").unwrap();
     let rpc = std::env::var("AXELAR_RPC").unwrap();
 
-    let mut subscriber = Subscriber::new(queue, database, chain_id, rpc);
+    let mut subscriber = Subscriber::new(queue, database, rpc);
 
     subscriber.run().await?;
 

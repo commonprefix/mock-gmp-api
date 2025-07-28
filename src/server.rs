@@ -21,7 +21,7 @@ use crate::{
         events::EventsModel,
         payloads::PayloadsModel,
     },
-    queue::{LapinConnection, QueueItem, QueueTrait, VerifyMessagesItem},
+    queue::{ConstructProofItem, LapinConnection, QueueItem, QueueTrait, VerifyMessagesItem},
     utils::{extract_id_and_contract_address, parse_task},
 };
 
@@ -218,10 +218,37 @@ async fn address_broadcast(
                         }
 
                         let maybe_construct_proof_json = broadcast_request.get("construct_proof");
-                        if let Some(construct_proof_json) = maybe_construct_proof_json {
-                            info!("Construct proof: {:?}", construct_proof_json);
-                        }
 
+                        if maybe_construct_proof_json.is_some() {
+                            let maybe_session_id_and_contract_address =
+                                extract_id_and_contract_address(
+                                    &script_result,
+                                    "wasm-messages_signing_started",
+                                )
+                                .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
+                            if let Some((session_id, contract_address)) =
+                                maybe_session_id_and_contract_address
+                            {
+                                debug!(
+                                    "Publishing construct proof for session_id: {:?}, contract_address: {:?}",
+                                    session_id, contract_address
+                                );
+                                queue
+                                    .publish(
+                                        &QueueItem::ConstructProof(ConstructProofItem {
+                                            session_id,
+                                            contract_address,
+                                        }),
+                                        None,
+                                    )
+                                    .await
+                                    .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
+                            } else {
+                                warn!(
+                                    "No session_id and contract_address extracted from script result"
+                                );
+                            }
+                        }
                         if !tx_hash.is_empty() {
                             if let Err(e) = broadcasts_model_clone
                                 .upsert(

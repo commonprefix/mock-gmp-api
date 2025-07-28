@@ -11,16 +11,14 @@ use tracing::{debug, error, info};
 pub struct Subscriber<Q: QueueTrait> {
     queue: Q,
     database: TasksModel,
-    chain_id: String,
     rpc: String,
 }
 
 impl<Q: QueueTrait> Subscriber<Q> {
-    pub fn new(queue: Q, database: TasksModel, chain_id: String, rpc: String) -> Self {
+    pub fn new(queue: Q, database: TasksModel, rpc: String) -> Self {
         Self {
             queue,
             database,
-            chain_id,
             rpc,
         }
     }
@@ -63,19 +61,11 @@ impl<Q: QueueTrait> Subscriber<Q> {
         }
     }
 
-    // TODO: (Issue) If I post a broadcast the subscriber tries to handle it immediately,
-    // but the voting hasnt completed yet, so it falls into a rabbithole checking all the
-    // history of the contract. If it waited a little before polling for the last page,
-    // it would immediately find it (way faster than retrying after parsing all pages)
-    // Maybe the solution is to only try to handle a delivery a few seconds after it was
-    // submitted to the queue and not immediately.
-
     pub async fn work(&self, consumer: &mut Consumer) -> Result<(), anyhow::Error> {
         match consumer.next().await {
             Some(Ok(delivery)) => {
                 let message = String::from_utf8(delivery.data.clone())?;
                 let item: QueueItem = serde_json::from_str(&message)?;
-                std::thread::sleep(std::time::Duration::from_secs(10));
 
                 match item {
                     QueueItem::VerifyMessages(item) => {
