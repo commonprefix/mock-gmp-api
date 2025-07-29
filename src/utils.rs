@@ -68,10 +68,10 @@ pub fn setup_logging() {
         .expect("Failed to set global tracing subscriber");
 }
 
-pub fn extract_id_and_contract_address(
+pub fn extract_info_from_script(
     script_result: &Value,
     event_type: &str,
-) -> Result<Option<(String, String)>, anyhow::Error> {
+) -> Result<Option<(String, String, String)>, anyhow::Error> {
     let logs = script_result
         .get("logs")
         .and_then(|v| v.as_array())
@@ -115,8 +115,19 @@ pub fn extract_id_and_contract_address(
                     })
                     .and_then(|attr| attr.get("value").and_then(|v| v.as_str()))
                     .unwrap_or("");
-                if !poll_id.is_empty() && !contract_address.is_empty() {
-                    return Ok(Some((poll_id.to_string(), contract_address.to_string())));
+                let chain = attributes
+                    .iter()
+                    .find(|attr| {
+                        attr.get("key").and_then(|v| v.as_str()).unwrap_or("") == "source_chain"
+                    })
+                    .and_then(|attr| attr.get("value").and_then(|v| v.as_str()))
+                    .unwrap_or("");
+                if !poll_id.is_empty() && !contract_address.is_empty() && !chain.is_empty() {
+                    return Ok(Some((
+                        poll_id.to_string(),
+                        contract_address.to_string(),
+                        chain.to_string(),
+                    )));
                 }
             }
         }

@@ -79,6 +79,7 @@ pub struct VerifyMessagesItem {
     pub poll_id: String,
     pub contract_address: String,
     pub broadcast_created_at: DateTime<Utc>,
+    pub chain: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -86,6 +87,7 @@ pub struct ConstructProofItem {
     pub session_id: String,
     pub contract_address: String,
     pub broadcast_created_at: DateTime<Utc>,
+    pub chain: String,
 }
 
 impl LapinConnection {

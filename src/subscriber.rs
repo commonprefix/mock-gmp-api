@@ -136,7 +136,7 @@ impl<Q: QueueTrait> Subscriber<Q> {
             .await;
 
             match maybe_quorum_reached_event {
-                Ok(Some((quorum_reached_event, event_timestamp))) => {
+                Ok(Some((quorum_reached_event, event_timestamp, block_height))) => {
                     info!("Found quorum reached event: {:?}", quorum_reached_event);
 
                     let mut attributes = Vec::new();
@@ -160,7 +160,7 @@ impl<Q: QueueTrait> Subscriber<Q> {
                     let react_to_wasm_quorum_reached_task = ReactToWasmEventTask {
                         common: CommonTaskFields {
                             id: uuid::Uuid::new_v4().to_string(),
-                            chain: "axelar".to_string(),
+                            chain: item.chain,
                             timestamp: event_timestamp.to_rfc3339(),
                             r#type: "REACT_TO_WASM_EVENT".to_string(),
                             meta: None,
@@ -170,7 +170,7 @@ impl<Q: QueueTrait> Subscriber<Q> {
                                 attributes,
                                 r#type: "wasm-quorum_reached".to_string(),
                             },
-                            height: 0, // TODO: Extract actual height from transaction data
+                            height: block_height.parse::<u64>().unwrap_or(0),
                         },
                     };
 
@@ -309,7 +309,7 @@ impl<Q: QueueTrait> Subscriber<Q> {
         desired_event_type: DesiredEventType,
         item_desired_id: String,
         message_timestamp: DateTime<Utc>,
-    ) -> Result<Option<(Value, DateTime<Utc>)>, anyhow::Error> {
+    ) -> Result<Option<(Value, DateTime<Utc>, String)>, anyhow::Error> {
         let event_type = desired_event_type.event_type_name();
         let desired_attribute = desired_event_type.attribute_name();
         let axelard_query_result = tokio::process::Command::new("bash")
@@ -338,6 +338,8 @@ impl<Q: QueueTrait> Subscriber<Q> {
                                 }
                                 found_newer_tx = true;
                             }
+
+                            let maybe_block_height = tx.get("height").and_then(|v| v.as_str());
 
                             if let Some(logs) = tx.get("logs").and_then(|v| v.as_array()) {
                                 for log in logs {
@@ -391,6 +393,9 @@ impl<Q: QueueTrait> Subscriber<Q> {
                                                         return Ok(Some((
                                                             event.clone(),
                                                             tx_timestamp,
+                                                            maybe_block_height
+                                                                .unwrap_or("0")
+                                                                .to_string(),
                                                         )));
                                                     }
                                                 }

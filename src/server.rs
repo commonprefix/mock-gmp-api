@@ -22,7 +22,7 @@ use crate::{
         payloads::PayloadsModel,
     },
     queue::{ConstructProofItem, LapinConnection, QueueItem, QueueTrait, VerifyMessagesItem},
-    utils::{extract_id_and_contract_address, parse_task},
+    utils::{extract_info_from_script, parse_task},
 };
 
 static AXELARD_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
@@ -187,18 +187,17 @@ async fn address_broadcast(
                         let maybe_verify_messages_json = broadcast_request.get("verify_messages");
 
                         if maybe_verify_messages_json.is_some() {
-                            let maybe_poll_id_and_contract_address =
-                                extract_id_and_contract_address(
-                                    &script_result,
-                                    "wasm-messages_poll_started",
-                                )
-                                .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
-                            if let Some((poll_id, contract_address)) =
+                            let maybe_poll_id_and_contract_address = extract_info_from_script(
+                                &script_result,
+                                "wasm-messages_poll_started",
+                            )
+                            .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
+                            if let Some((poll_id, contract_address, chain)) =
                                 maybe_poll_id_and_contract_address
                             {
                                 debug!(
-                                    "Publishing verify messages for poll_id: {:?}, contract_address: {:?}",
-                                    poll_id, contract_address
+                                    "Publishing verify messages for poll_id: {:?}, contract_address: {:?}, chain: {:?}",
+                                    poll_id, contract_address, chain
                                 );
                                 queue
                                     .publish(
@@ -206,6 +205,7 @@ async fn address_broadcast(
                                             poll_id,
                                             contract_address,
                                             broadcast_created_at: chrono::Utc::now(),
+                                            chain,
                                         }),
                                         None,
                                     )
@@ -221,18 +221,17 @@ async fn address_broadcast(
                         let maybe_construct_proof_json = broadcast_request.get("construct_proof");
 
                         if maybe_construct_proof_json.is_some() {
-                            let maybe_session_id_and_contract_address =
-                                extract_id_and_contract_address(
-                                    &script_result,
-                                    "wasm-messages_signing_started",
-                                )
-                                .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
-                            if let Some((session_id, contract_address)) =
+                            let maybe_session_id_and_contract_address = extract_info_from_script(
+                                &script_result,
+                                "wasm-messages_signing_started",
+                            )
+                            .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
+                            if let Some((session_id, contract_address, chain)) =
                                 maybe_session_id_and_contract_address
                             {
                                 debug!(
-                                    "Publishing construct proof for session_id: {:?}, contract_address: {:?}",
-                                    session_id, contract_address
+                                    "Publishing construct proof for session_id: {:?}, contract_address: {:?}, chain: {:?}",
+                                    session_id, contract_address, chain
                                 );
                                 queue
                                     .publish(
@@ -240,6 +239,7 @@ async fn address_broadcast(
                                             session_id,
                                             contract_address,
                                             broadcast_created_at: chrono::Utc::now(),
+                                            chain,
                                         }),
                                         None,
                                     )
