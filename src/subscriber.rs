@@ -136,7 +136,7 @@ impl<Q: QueueTrait> Subscriber<Q> {
             .await;
 
             match maybe_quorum_reached_event {
-                Ok(Some(quorum_reached_event)) => {
+                Ok(Some((quorum_reached_event, event_timestamp))) => {
                     info!("Found quorum reached event: {:?}", quorum_reached_event);
 
                     let mut attributes = Vec::new();
@@ -161,7 +161,7 @@ impl<Q: QueueTrait> Subscriber<Q> {
                         common: CommonTaskFields {
                             id: uuid::Uuid::new_v4().to_string(),
                             chain: "axelar".to_string(),
-                            timestamp: item.broadcast_created_at.to_string(),
+                            timestamp: event_timestamp.to_rfc3339(),
                             r#type: "REACT_TO_WASM_EVENT".to_string(),
                             meta: None,
                         },
@@ -180,7 +180,7 @@ impl<Q: QueueTrait> Subscriber<Q> {
                         .upsert(
                             &react_to_wasm_quorum_reached_task.common.id,
                             &react_to_wasm_quorum_reached_task.common.chain,
-                            item.broadcast_created_at,
+                            event_timestamp,
                             crate::gmp_types::TaskKind::ReactToWasmEvent,
                             Some(&task_json),
                         )
@@ -277,7 +277,6 @@ impl<Q: QueueTrait> Subscriber<Q> {
                     let total_count = json_value
                         .get("total_count")
                         .and_then(|v| {
-                            // Try as number first, then as string
                             v.as_u64()
                                 .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
                         })
@@ -310,7 +309,7 @@ impl<Q: QueueTrait> Subscriber<Q> {
         desired_event_type: DesiredEventType,
         item_desired_id: String,
         message_timestamp: DateTime<Utc>,
-    ) -> Result<Option<Value>, anyhow::Error> {
+    ) -> Result<Option<(Value, DateTime<Utc>)>, anyhow::Error> {
         let event_type = desired_event_type.event_type_name();
         let desired_attribute = desired_event_type.attribute_name();
         let axelard_query_result = tokio::process::Command::new("bash")
@@ -380,7 +379,19 @@ impl<Q: QueueTrait> Subscriber<Q> {
 
                                                     if event_id == item_desired_id {
                                                         info!("ID match found! Returning event.");
-                                                        return Ok(Some(event.clone()));
+                                                        let tx_timestamp = if let Some(timestamp) =
+                                                            tx.get("timestamp")
+                                                                .and_then(|v| v.as_str())
+                                                        {
+                                                            DateTime::parse_from_rfc3339(timestamp)?
+                                                                .into()
+                                                        } else {
+                                                            message_timestamp
+                                                        };
+                                                        return Ok(Some((
+                                                            event.clone(),
+                                                            tx_timestamp,
+                                                        )));
                                                     }
                                                 }
                                             }
