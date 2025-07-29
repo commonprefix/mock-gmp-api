@@ -1,4 +1,8 @@
 use crate::{
+    gmp_types::{
+        CommonTaskFields, EventAttribute, ReactToWasmEventTask, ReactToWasmEventTaskFields,
+        WasmEvent,
+    },
     models::tasks::TasksModel,
     queue::{ConstructProofItem, QueueItem, QueueTrait, VerifyMessagesItem},
 };
@@ -129,13 +133,83 @@ impl<Q: QueueTrait> Subscriber<Q> {
                 item.poll_id.clone(),
                 item.broadcast_created_at,
             )
-            .await?;
+            .await;
 
-            if let Some(quorum_reached_event) = maybe_quorum_reached_event {
-                info!("Found quorum reached event: {:?}", quorum_reached_event);
-                return Ok(());
-            } else {
-                warn!("No quorum reached event found");
+            match maybe_quorum_reached_event {
+                Ok(Some(quorum_reached_event)) => {
+                    info!("Found quorum reached event: {:?}", quorum_reached_event);
+
+                    let mut attributes = Vec::new();
+                    if let Some(attrs) = quorum_reached_event
+                        .get("attributes")
+                        .and_then(|v| v.as_array())
+                    {
+                        for attr in attrs {
+                            if let (Some(key), Some(value)) = (
+                                attr.get("key").and_then(|v| v.as_str()),
+                                attr.get("value").and_then(|v| v.as_str()),
+                            ) {
+                                attributes.push(EventAttribute {
+                                    key: key.to_string(),
+                                    value: value.to_string(),
+                                });
+                            }
+                        }
+                    }
+
+                    let react_to_wasm_quorum_reached_task = ReactToWasmEventTask {
+                        common: CommonTaskFields {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            chain: "axelar".to_string(),
+                            timestamp: item.broadcast_created_at.to_string(),
+                            r#type: "REACT_TO_WASM_EVENT".to_string(),
+                            meta: None,
+                        },
+                        task: ReactToWasmEventTaskFields {
+                            event: WasmEvent {
+                                attributes,
+                                r#type: "wasm-quorum_reached".to_string(),
+                            },
+                            height: 0, // TODO: Extract actual height from transaction data
+                        },
+                    };
+
+                    let task_json = serde_json::to_string(&react_to_wasm_quorum_reached_task)?;
+
+                    self.database
+                        .upsert(
+                            &react_to_wasm_quorum_reached_task.common.id,
+                            &react_to_wasm_quorum_reached_task.common.chain,
+                            item.broadcast_created_at,
+                            crate::gmp_types::TaskKind::ReactToWasmEvent,
+                            Some(&task_json),
+                        )
+                        .await?;
+
+                    info!(
+                        "Inserted ReactToWasmEvent task with ID: {}",
+                        react_to_wasm_quorum_reached_task.common.id
+                    );
+
+                    return Ok(());
+                }
+                Ok(None) => {
+                    warn!("No quorum reached event found on page {}", page);
+                }
+                Err(e) => {
+                    // Check if this is the "too old timestamp" error - if so, stop searching
+                    if e.to_string()
+                        .contains("Timestamp is less than message timestamp")
+                    {
+                        warn!(
+                            "Reached transactions older than broadcast time, stopping search at page {}",
+                            page
+                        );
+                        break;
+                    } else {
+                        return Err(e);
+                    }
+                }
             }
         }
 
@@ -254,14 +328,16 @@ impl<Q: QueueTrait> Subscriber<Q> {
                     let json_value = serde_json::from_str::<Value>(&output_str)?;
 
                     if let Some(txs) = json_value.get("txs").and_then(|v| v.as_array()) {
-                        let mut save_timestamp = message_timestamp;
+                        let mut found_newer_tx = false;
                         for tx in txs {
                             if let Some(timestamp) = tx.get("timestamp").and_then(|v| v.as_str()) {
                                 let tx_timestamp = DateTime::parse_from_rfc3339(timestamp)?;
-                                if tx_timestamp < message_timestamp {
-                                    save_timestamp = tx_timestamp.into();
-                                    continue;
+                                // Allow 2 seconds tolerance for timestamp recording delays (different precision in local timestamps with blockchain ones))
+                                let tolerance = chrono::Duration::seconds(2);
+                                if tx_timestamp + tolerance < message_timestamp {
+                                    continue; // Skip old transactions but keep checking the page
                                 }
+                                found_newer_tx = true;
                             }
 
                             if let Some(logs) = tx.get("logs").and_then(|v| v.as_array()) {
@@ -313,7 +389,10 @@ impl<Q: QueueTrait> Subscriber<Q> {
                                 }
                             }
                         }
-                        if save_timestamp < message_timestamp {
+
+                        // If we didn't find any transactions newer than broadcast time on this page,
+                        // stop searching further pages (they'll be even older)
+                        if !found_newer_tx {
                             return Err(anyhow::anyhow!(
                                 "Timestamp is less than message timestamp"
                             ));

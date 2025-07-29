@@ -18,8 +18,6 @@ pub trait QueueTrait {
     async fn consumer(&mut self, consumer_name: &str) -> Result<lapin::Consumer, anyhow::Error>;
 }
 
-const MAX_RETRIES: u16 = 5;
-
 #[derive(Clone)]
 pub struct LapinConnection {
     channel: Channel,
