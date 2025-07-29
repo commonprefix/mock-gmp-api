@@ -2,11 +2,15 @@ use crate::{
     models::tasks::TasksModel,
     queue::{ConstructProofItem, QueueItem, QueueTrait, VerifyMessagesItem},
 };
+use chrono::{DateTime, Utc};
 use futures::StreamExt;
-use lapin::{Consumer, options::BasicAckOptions};
+use lapin::{
+    Consumer,
+    options::{BasicAckOptions, BasicNackOptions},
+};
 use serde_json::Value;
 use std::collections::HashMap;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 pub struct Subscriber<Q: QueueTrait> {
     queue: Q,
@@ -23,14 +27,6 @@ impl<Q: QueueTrait> Subscriber<Q> {
         }
     }
 }
-
-pub trait TransactionPoller<Q: QueueTrait> {
-    fn make_database_item(&mut self) -> QueueItem;
-
-    fn poll_transactions(&mut self) -> Result<(), anyhow::Error>;
-}
-
-//impl<Q: QueueTrait> TransactionPoller<Q> for Subscriber<Q> {}
 
 pub enum DesiredEventType {
     QuorumReached,
@@ -62,6 +58,7 @@ impl<Q: QueueTrait> Subscriber<Q> {
     }
 
     pub async fn work(&self, consumer: &mut Consumer) -> Result<(), anyhow::Error> {
+        info!("Waiting for message...");
         match consumer.next().await {
             Some(Ok(delivery)) => {
                 let message = String::from_utf8(delivery.data.clone())?;
@@ -70,16 +67,30 @@ impl<Q: QueueTrait> Subscriber<Q> {
                 match item {
                     QueueItem::VerifyMessages(item) => {
                         info!("Got verify messages item: {:?}", item);
-                        if let Err(e) = self.handle_verify_messages(item).await {
+                        if let Err(e) = self.handle_verify_messages(item.clone()).await {
                             error!("Error: {}", e);
+                            debug!("Republishing verify messages item");
+                            delivery
+                                .nack(BasicNackOptions {
+                                    multiple: false,
+                                    requeue: true,
+                                })
+                                .await?;
                         } else {
                             delivery.ack(BasicAckOptions::default()).await?;
                         }
                     }
                     QueueItem::ConstructProof(item) => {
                         info!("Got construct proof item: {:?}", item);
-                        if let Err(e) = self.handle_construct_proof(item).await {
+                        if let Err(e) = self.handle_construct_proof(item.clone()).await {
                             error!("Error: {}", e);
+                            debug!("Republishing construct proof item");
+                            self.queue
+                                .publish(
+                                    &QueueItem::ConstructProof(item),
+                                    Some(delivery.properties.clone()),
+                                )
+                                .await?;
                         } else {
                             delivery.ack(BasicAckOptions::default()).await?;
                         }
@@ -116,6 +127,7 @@ impl<Q: QueueTrait> Subscriber<Q> {
                 axelard_query_script_str,
                 DesiredEventType::QuorumReached,
                 item.poll_id.clone(),
+                item.broadcast_created_at,
             )
             .await?;
 
@@ -123,7 +135,7 @@ impl<Q: QueueTrait> Subscriber<Q> {
                 info!("Found quorum reached event: {:?}", quorum_reached_event);
                 return Ok(());
             } else {
-                error!("No quorum reached event found");
+                warn!("No quorum reached event found");
             }
         }
 
@@ -150,6 +162,7 @@ impl<Q: QueueTrait> Subscriber<Q> {
                 axelard_query_script_str,
                 DesiredEventType::SigningCompleted,
                 item.session_id.clone(),
+                item.broadcast_created_at,
             )
             .await?;
 
@@ -160,7 +173,7 @@ impl<Q: QueueTrait> Subscriber<Q> {
                 );
                 return Ok(());
             } else {
-                error!("No signing completed event found");
+                warn!("No signing completed event found on page {}", page);
             }
         }
 
@@ -222,6 +235,7 @@ impl<Q: QueueTrait> Subscriber<Q> {
         axelard_query_script_str: String,
         desired_event_type: DesiredEventType,
         item_desired_id: String,
+        message_timestamp: DateTime<Utc>,
     ) -> Result<Option<Value>, anyhow::Error> {
         let event_type = desired_event_type.event_type_name();
         let desired_attribute = desired_event_type.attribute_name();
@@ -240,20 +254,25 @@ impl<Q: QueueTrait> Subscriber<Q> {
                     let json_value = serde_json::from_str::<Value>(&output_str)?;
 
                     if let Some(txs) = json_value.get("txs").and_then(|v| v.as_array()) {
-                        debug!("Processing {} transactions", txs.len());
+                        let mut save_timestamp = message_timestamp;
                         for tx in txs {
+                            if let Some(timestamp) = tx.get("timestamp").and_then(|v| v.as_str()) {
+                                let tx_timestamp = DateTime::parse_from_rfc3339(timestamp)?;
+                                if tx_timestamp < message_timestamp {
+                                    save_timestamp = tx_timestamp.into();
+                                    continue;
+                                }
+                            }
+
                             if let Some(logs) = tx.get("logs").and_then(|v| v.as_array()) {
                                 for log in logs {
                                     if let Some(tx_events) =
                                         log.get("events").and_then(|v| v.as_array())
                                     {
-                                        debug!("Transaction has {} events", tx_events.len());
-
                                         for event in tx_events {
                                             if let Some(event_type_val) =
                                                 event.get("type").and_then(|v| v.as_str())
                                             {
-                                                debug!("Found event type: {}", event_type_val);
                                                 if event_type_val == event_type {
                                                     debug!(
                                                         "Event type matches! Looking for {} = '{}'...",
@@ -283,11 +302,6 @@ impl<Q: QueueTrait> Subscriber<Q> {
                                                         })
                                                         .unwrap_or("");
 
-                                                    debug!(
-                                                        "Found event id: '{}', looking for: '{}'",
-                                                        event_id, item_desired_id
-                                                    );
-
                                                     if event_id == item_desired_id {
                                                         info!("ID match found! Returning event.");
                                                         return Ok(Some(event.clone()));
@@ -298,6 +312,11 @@ impl<Q: QueueTrait> Subscriber<Q> {
                                     }
                                 }
                             }
+                        }
+                        if save_timestamp < message_timestamp {
+                            return Err(anyhow::anyhow!(
+                                "Timestamp is less than message timestamp"
+                            ));
                         }
                     } else {
                         return Err(anyhow::anyhow!("No event found"));

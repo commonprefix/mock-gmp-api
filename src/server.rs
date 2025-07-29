@@ -205,6 +205,7 @@ async fn address_broadcast(
                                         &QueueItem::VerifyMessages(VerifyMessagesItem {
                                             poll_id,
                                             contract_address,
+                                            broadcast_created_at: chrono::Utc::now(),
                                         }),
                                         None,
                                     )
@@ -238,6 +239,7 @@ async fn address_broadcast(
                                         &QueueItem::ConstructProof(ConstructProofItem {
                                             session_id,
                                             contract_address,
+                                            broadcast_created_at: chrono::Utc::now(),
                                         }),
                                         None,
                                     )

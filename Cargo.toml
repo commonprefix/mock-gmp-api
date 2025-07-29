@@ -41,3 +41,6 @@ name = "server"
 [[bin]]
 path = "src/bin/subscriber_main.rs"
 name = "subscriber"
+
+[lints.clippy]
+uninlined_format_args = "allow"

@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
@@ -16,8 +17,10 @@ pub trait QueueTrait {
     ) -> Result<(), anyhow::Error>;
     async fn consumer(&mut self, consumer_name: &str) -> Result<lapin::Consumer, anyhow::Error>;
 }
-#[derive(Clone)]
 
+const MAX_RETRIES: u16 = 5;
+
+#[derive(Clone)]
 pub struct LapinConnection {
     channel: Channel,
     queue_name: String,
@@ -77,17 +80,19 @@ pub enum QueueItem {
 pub struct VerifyMessagesItem {
     pub poll_id: String,
     pub contract_address: String,
+    pub broadcast_created_at: DateTime<Utc>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ConstructProofItem {
     pub session_id: String,
     pub contract_address: String,
+    pub broadcast_created_at: DateTime<Utc>,
 }
 
 impl LapinConnection {
     pub async fn new(addr: &str, queue_name: &str) -> Result<Self, anyhow::Error> {
-        let conn = Connection::connect(&addr, ConnectionProperties::default())
+        let conn = Connection::connect(addr, ConnectionProperties::default())
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
@@ -116,4 +121,32 @@ impl LapinConnection {
             queue_name: queue_name.to_string(),
         })
     }
+
+    // async fn republish(
+    //     &self,
+    //     item: &QueueItem,
+    //     properties: Option<BasicProperties>,
+    // ) -> Result<(), anyhow::Error> {
+
+    //     if
+    //     let msg = serde_json::to_vec(item)?;
+
+    //     let confirm = self
+    //         .channel
+    //         .basic_publish(
+    //             "",
+    //             &self.queue_name,
+    //             BasicPublishOptions::default(),
+    //             &msg,
+    //             properties.unwrap_or(BasicProperties::default().with_delivery_mode(2)),
+    //         )
+    //         .await?
+    //         .await?;
+
+    //     if confirm.is_ack() {
+    //         Ok(())
+    //     } else {
+    //         Err(anyhow::anyhow!("Failed to publish message"))
+    //     }
+    // }
 }

@@ -115,7 +115,7 @@ pub fn extract_id_and_contract_address(
                     })
                     .and_then(|attr| attr.get("value").and_then(|v| v.as_str()))
                     .unwrap_or("");
-                if poll_id != "" && contract_address != "" {
+                if !poll_id.is_empty() && !contract_address.is_empty() {
                     return Ok(Some((poll_id.to_string(), contract_address.to_string())));
                 }
             }
