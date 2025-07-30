@@ -218,7 +218,7 @@ impl<Q: QueueTrait> Subscriber<Q> {
 
     async fn handle_construct_proof(&self, item: ConstructProofItem) -> Result<(), anyhow::Error> {
         let initial_axelard_query_script_str = format!(
-            "axelard query txs --events 'wasm-messages_signing_started._contract_address={}' --node {} --output json --limit 1",
+            "axelard query txs --events 'wasm-signing_completed._contract_address={}' --node {} --output json --limit 1",
             item.contract_address, self.rpc
         );
 

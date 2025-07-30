@@ -221,11 +221,9 @@ async fn address_broadcast(
                         let maybe_construct_proof_json = broadcast_request.get("construct_proof");
 
                         if maybe_construct_proof_json.is_some() {
-                            let maybe_session_id_and_contract_address = extract_info_from_script(
-                                &script_result,
-                                "wasm-messages_signing_started",
-                            )
-                            .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
+                            let maybe_session_id_and_contract_address =
+                                extract_info_from_script(&script_result, "wasm-signing_started")
+                                    .map_err(|e| error::ErrorInternalServerError(e.to_string()))?;
                             if let Some((session_id, contract_address, chain)) =
                                 maybe_session_id_and_contract_address
                             {
@@ -251,6 +249,7 @@ async fn address_broadcast(
                                 );
                             }
                         }
+
                         if !tx_hash.is_empty() {
                             if let Err(e) = broadcasts_model_clone
                                 .upsert(

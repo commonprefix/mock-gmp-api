@@ -91,8 +91,7 @@ pub fn extract_info_from_script(
         for event in events {
             let parsed_event_type = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
             if parsed_event_type == event_type {
-                debug!("Poll started event found");
-                debug!("Event: {:?}", event);
+                debug!("Event of type {} found: {:?}", event_type, event);
                 let attributes = event
                     .get("attributes")
                     .and_then(|v| v.as_array())
@@ -100,10 +99,16 @@ pub fn extract_info_from_script(
                         error!("Attributes not found in event");
                         anyhow::anyhow!("Attributes not found in event")
                     })?;
-                let poll_id = attributes
+                let desired_id_attribute_name = match event_type {
+                    "wasm-messages_poll_started" => "poll_id",
+                    "wasm-signing_started" => "signing_session_id",
+                    _ => return Err(anyhow::anyhow!("Invalid event type")),
+                };
+                let desired_id = attributes
                     .iter()
                     .find(|attr| {
-                        attr.get("key").and_then(|v| v.as_str()).unwrap_or("") == "poll_id"
+                        attr.get("key").and_then(|v| v.as_str()).unwrap_or("")
+                            == desired_id_attribute_name
                     })
                     .and_then(|attr| attr.get("value").and_then(|v| v.as_str()))
                     .unwrap_or("");
@@ -122,9 +127,9 @@ pub fn extract_info_from_script(
                     })
                     .and_then(|attr| attr.get("value").and_then(|v| v.as_str()))
                     .unwrap_or("");
-                if !poll_id.is_empty() && !contract_address.is_empty() && !chain.is_empty() {
+                if !desired_id.is_empty() && !contract_address.is_empty() && !chain.is_empty() {
                     return Ok(Some((
-                        poll_id.to_string(),
+                        desired_id.to_string(),
                         contract_address.to_string(),
                         chain.to_string(),
                     )));
