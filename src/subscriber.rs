@@ -6,6 +6,7 @@ use crate::{
     models::tasks::TasksModel,
     queue::{ConstructProofItem, QueueItem, QueueTrait, VerifyMessagesItem},
 };
+use base64::{Engine as _, engine::general_purpose};
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
 use lapin::{
@@ -283,6 +284,10 @@ impl<Q: QueueTrait> Subscriber<Q> {
                                     warn!("No execute data found");
                                 }
 
+                                // Base64 encode the execute_data
+                                let encoded_execute_data =
+                                    general_purpose::STANDARD.encode(execute_data);
+
                                 let gateway_tx_task = GatewayTxTask {
                                     common: CommonTaskFields {
                                         id: uuid::Uuid::new_v4().to_string(),
@@ -292,7 +297,7 @@ impl<Q: QueueTrait> Subscriber<Q> {
                                         meta: None,
                                     },
                                     task: GatewayTxTaskFields {
-                                        execute_data: execute_data.to_string(),
+                                        execute_data: encoded_execute_data,
                                     },
                                 };
 
