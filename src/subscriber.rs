@@ -250,7 +250,7 @@ impl<Q: QueueTrait> Subscriber<Q> {
 
                     let axelard_query_command = format!(
                         "axelard query wasm contract-state smart {} '{}' --node {} --output json",
-                        item.contract_address,
+                        "axelar1ys83sedjffmqh70aksejmx3fy3q2d7twm3msurk7wn3l6nkwxp0sfelzhl",
                         format!(
                             "{{ \"proof\": {{ \"multisig_session_id\": \"{}\" }} }}",
                             item.session_id
@@ -538,6 +538,7 @@ pub struct EventData {
 
 #[cfg(test)]
 mod tests {
+    use base64::{Engine, engine::general_purpose};
     use serde_json::Value;
 
     #[tokio::test]
@@ -570,5 +571,19 @@ mod tests {
         let actual_json: Value = serde_json::from_slice(&output.stdout).unwrap();
 
         assert_eq!(json_value, actual_json);
+
+        let execute_data = json_value
+            .get("data")
+            .and_then(|v| v.get("status"))
+            .and_then(|v| v.get("completed"))
+            .and_then(|v| v.get("execute_data"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        // Base64 encode the execute_data
+        let encoded_execute_data = general_purpose::STANDARD.encode(execute_data);
+
+        println!("Encoded execute data: {}", encoded_execute_data);
+        assert!(!execute_data.is_empty());
     }
 }

@@ -101,7 +101,7 @@ pub fn extract_info_from_script(
                     })?;
                 let desired_id_attribute_name = match event_type {
                     "wasm-messages_poll_started" => "poll_id",
-                    "wasm-signing_started" => "signing_session_id",
+                    "wasm-signing_started" => "session_id",
                     _ => return Err(anyhow::anyhow!("Invalid event type")),
                 };
                 let desired_id = attributes
@@ -122,9 +122,7 @@ pub fn extract_info_from_script(
                     .unwrap_or("");
                 let chain = attributes
                     .iter()
-                    .find(|attr| {
-                        attr.get("key").and_then(|v| v.as_str()).unwrap_or("") == "source_chain"
-                    })
+                    .find(|attr| attr.get("key").and_then(|v| v.as_str()).unwrap_or("") == "chain")
                     .and_then(|attr| attr.get("value").and_then(|v| v.as_str()))
                     .unwrap_or("");
                 if !desired_id.is_empty() && !contract_address.is_empty() && !chain.is_empty() {
