@@ -1,7 +1,7 @@
 use crate::{
     gmp_types::{
-        CommonTaskFields, EventAttribute, ReactToWasmEventTask, ReactToWasmEventTaskFields,
-        WasmEvent,
+        CommonTaskFields, EventAttribute, GatewayTxTask, GatewayTxTaskFields, ReactToWasmEventTask,
+        ReactToWasmEventTaskFields, WasmEvent,
     },
     models::tasks::TasksModel,
     queue::{ConstructProofItem, QueueItem, QueueTrait, VerifyMessagesItem},
@@ -13,7 +13,7 @@ use lapin::{
     options::{BasicAckOptions, BasicNackOptions},
 };
 use serde_json::Value;
-use std::collections::HashMap;
+use std::{collections::HashMap, env};
 use tracing::{debug, error, info, warn};
 
 pub struct Subscriber<Q: QueueTrait> {
@@ -127,7 +127,7 @@ impl<Q: QueueTrait> Subscriber<Q> {
                 item.contract_address, self.rpc, page
             );
 
-            let maybe_quorum_reached_event = Self::get_event_from_script(
+            let maybe_quorum_reached_event_fields = Self::get_event_fields_from_script(
                 axelard_query_script_str,
                 DesiredEventType::QuorumReached,
                 item.poll_id.clone(),
@@ -135,7 +135,7 @@ impl<Q: QueueTrait> Subscriber<Q> {
             )
             .await;
 
-            match maybe_quorum_reached_event {
+            match maybe_quorum_reached_event_fields {
                 Ok(Some((quorum_reached_event, event_timestamp, block_height))) => {
                     info!("Found quorum reached event: {:?}", quorum_reached_event);
 
@@ -232,25 +232,110 @@ impl<Q: QueueTrait> Subscriber<Q> {
                 item.contract_address, self.rpc, page
             );
 
-            let maybe_signing_completed_event = Self::get_event_from_script(
+            let maybe_signing_completed_event_fields = Self::get_event_fields_from_script(
                 axelard_query_script_str,
                 DesiredEventType::SigningCompleted,
                 item.session_id.clone(),
                 item.broadcast_created_at,
             )
-            .await?;
+            .await;
 
-            if let Some(signing_completed_event) = maybe_signing_completed_event {
-                info!(
-                    "Found signing completed event: {:?}",
-                    signing_completed_event
-                );
-                return Ok(());
-            } else {
-                warn!("No signing completed event found on page {}", page);
+            match maybe_signing_completed_event_fields {
+                Ok(Some((signing_completed_event, event_timestamp, _block_height))) => {
+                    info!(
+                        "Found signing completed event: {:?}",
+                        signing_completed_event
+                    );
+
+                    let axelard_query_command = format!(
+                        "axelard query wasm contract-state smart {} '{}' --node {} --chain-id {} --output json",
+                        item.contract_address,
+                        format!(
+                            "{{ \"proof\": {{ \"multisig_session_id\": \"{}\" }} }}",
+                            item.session_id
+                        ),
+                        env::var("AXELAR_RPC")?,
+                        item.chain
+                    );
+
+                    let axelard_query_result = tokio::process::Command::new("bash")
+                        .arg("-c")
+                        .arg(axelard_query_command.clone())
+                        .output()
+                        .await;
+
+                    match axelard_query_result {
+                        Ok(output) => {
+                            if output.status.success() {
+                                let output_str = String::from_utf8_lossy(&output.stdout);
+                                let json_value = serde_json::from_str::<Value>(&output_str)?;
+
+                                info!("Query executed successfully: {}", output_str);
+
+                                // get tx
+
+                                let gateway_tx_task = GatewayTxTask {
+                                    common: CommonTaskFields {
+                                        id: uuid::Uuid::new_v4().to_string(),
+                                        chain: item.chain,
+                                        timestamp: event_timestamp.to_rfc3339(),
+                                        r#type: "GATEWAY_TX".to_string(),
+                                        meta: None,
+                                    },
+                                    task: GatewayTxTaskFields {
+                                        execute_data: json_value
+                                            .get("tx")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("")
+                                            .to_string(),
+                                    },
+                                };
+
+                                let task_json = serde_json::to_string(&gateway_tx_task)?;
+
+                                self.database
+                                    .upsert(
+                                        &gateway_tx_task.common.id,
+                                        &gateway_tx_task.common.chain,
+                                        event_timestamp,
+                                        crate::gmp_types::TaskKind::GatewayTx,
+                                        Some(&task_json),
+                                    )
+                                    .await?;
+
+                                info!(
+                                    "Inserted GatewayTx task with ID: {}",
+                                    gateway_tx_task.common.id
+                                );
+
+                                return Ok(());
+                            } else {
+                                error!("Query failed: {}", axelard_query_command);
+                            }
+                        }
+                        Err(e) => {
+                            error!("Error: {}", e);
+                        }
+                    }
+                }
+                Ok(None) => {
+                    warn!("No signing completed event found on page {}", page);
+                }
+                Err(e) => {
+                    if e.to_string()
+                        .contains("Timestamp is less than message timestamp")
+                    {
+                        warn!(
+                            "Reached transactions older than broadcast time, stopping search at page {}",
+                            page
+                        );
+                        break;
+                    } else {
+                        return Err(e);
+                    }
+                }
             }
         }
-
         Err(anyhow::anyhow!("No signing completed event found"))
     }
 
@@ -304,7 +389,7 @@ impl<Q: QueueTrait> Subscriber<Q> {
         }
     }
 
-    async fn get_event_from_script(
+    async fn get_event_fields_from_script(
         axelard_query_script_str: String,
         desired_event_type: DesiredEventType,
         item_desired_id: String,

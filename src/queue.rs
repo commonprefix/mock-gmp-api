@@ -121,32 +121,4 @@ impl LapinConnection {
             queue_name: queue_name.to_string(),
         })
     }
-
-    // async fn republish(
-    //     &self,
-    //     item: &QueueItem,
-    //     properties: Option<BasicProperties>,
-    // ) -> Result<(), anyhow::Error> {
-
-    //     if
-    //     let msg = serde_json::to_vec(item)?;
-
-    //     let confirm = self
-    //         .channel
-    //         .basic_publish(
-    //             "",
-    //             &self.queue_name,
-    //             BasicPublishOptions::default(),
-    //             &msg,
-    //             properties.unwrap_or(BasicProperties::default().with_delivery_mode(2)),
-    //         )
-    //         .await?
-    //         .await?;
-
-    //     if confirm.is_ack() {
-    //         Ok(())
-    //     } else {
-    //         Err(anyhow::anyhow!("Failed to publish message"))
-    //     }
-    // }
 }
