@@ -564,7 +564,6 @@ mod tests {
             .output()
             .await;
 
-        //println!("{:?}", axelard_query_result);
         assert!(axelard_query_result.is_ok());
 
         let json_value = serde_json::from_str::<Value>(
@@ -585,10 +584,6 @@ mod tests {
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
-        // Base64 encode the execute_data
-        //let encoded_execute_data = general_purpose::STANDARD.encode(execute_data);
-
-        //println!("Encoded execute data: {}", encoded_execute_data);
         assert!(!execute_data.is_empty());
     }
 
@@ -615,7 +610,6 @@ mod tests {
             }
             Ok(None) => {
                 panic!("No event found with poll_id '\"7438\"' on page 69");
-                // This is expected if the poll_id doesn't exist - test should pass
             }
             Err(e) => {
                 panic!("Query failed: {}", e);
