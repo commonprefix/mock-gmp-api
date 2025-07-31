@@ -248,14 +248,13 @@ impl<Q: QueueTrait> Subscriber<Q> {
                     );
 
                     let axelard_query_command = format!(
-                        "axelard query wasm contract-state smart {} '{}' --node {} --chain-id {} --output json",
+                        "axelard query wasm contract-state smart {} '{}' --node {} --output json",
                         item.contract_address,
                         format!(
                             "{{ \"proof\": {{ \"multisig_session_id\": \"{}\" }} }}",
                             item.session_id
                         ),
-                        env::var("AXELAR_RPC")?,
-                        item.chain
+                        self.rpc,
                     );
 
                     let axelard_query_result = tokio::process::Command::new("bash")
@@ -272,7 +271,17 @@ impl<Q: QueueTrait> Subscriber<Q> {
 
                                 info!("Query executed successfully: {}", output_str);
 
-                                // get tx
+                                let execute_data = json_value
+                                    .get("data")
+                                    .and_then(|v| v.get("status"))
+                                    .and_then(|v| v.get("completed"))
+                                    .and_then(|v| v.get("execute_data"))
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+
+                                if execute_data.is_empty() {
+                                    warn!("No execute data found");
+                                }
 
                                 let gateway_tx_task = GatewayTxTask {
                                     common: CommonTaskFields {
@@ -283,11 +292,7 @@ impl<Q: QueueTrait> Subscriber<Q> {
                                         meta: None,
                                     },
                                     task: GatewayTxTaskFields {
-                                        execute_data: json_value
-                                            .get("tx")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("")
-                                            .to_string(),
+                                        execute_data: execute_data.to_string(),
                                     },
                                 };
 
@@ -524,4 +529,31 @@ impl<Q: QueueTrait> Subscriber<Q> {
 pub struct EventData {
     pub event_type: String,
     pub attributes: HashMap<String, String>,
+}
+
+#[cfg(test)]
+mod tests {
+
+    #[tokio::test]
+    async fn test_proof_query() {
+        let axelard_query_command = format!(
+            "axelard query wasm contract-state smart {} '{}' --node {} --output json",
+            "axelar1ys83sedjffmqh70aksejmx3fy3q2d7twm3msurk7wn3l6nkwxp0sfelzhl",
+            format!(
+                "{{ \"proof\": {{ \"multisig_session_id\": \"{}\" }} }}",
+                "22128"
+            ),
+            "http://devnet-amplifier.axelar.dev:26657",
+        );
+
+        let axelard_query_result = tokio::process::Command::new("bash")
+            .arg("-c")
+            .arg(axelard_query_command.clone())
+            .output()
+            .await;
+
+        println!("{:?}", axelard_query_result);
+        assert!(axelard_query_result.is_ok());
+        assert!(axelard_query_result.unwrap().status.success());
+    }
 }
