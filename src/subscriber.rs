@@ -13,7 +13,7 @@ use lapin::{
     options::{BasicAckOptions, BasicNackOptions},
 };
 use serde_json::Value;
-use std::{collections::HashMap, env};
+use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
 
 pub struct Subscriber<Q: QueueTrait> {
@@ -533,6 +533,7 @@ pub struct EventData {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::Value;
 
     #[tokio::test]
     async fn test_proof_query() {
@@ -554,6 +555,15 @@ mod tests {
 
         println!("{:?}", axelard_query_result);
         assert!(axelard_query_result.is_ok());
-        assert!(axelard_query_result.unwrap().status.success());
+
+        let json_value = serde_json::from_str::<Value>(
+            r#"{"data":{"unsigned_tx_hash":"343b170eea170676f5db8381af07ea228edb5c7097b210de25bd9f382befe9b4","status":{"completed":{"execute_data":"12000022000000002400000000202900008085614000000000030d406840000000000026ac73008114aedcfbaf02217eb9265a4b67534354e4768363c3831466f26a03e4cd3442da9149468cfd898f788944c8f3e0107321030543653008b6a4eb09b34231bc1b800422053aa558e4088b141cfb632af40ad674473045022100db70c761ca6fccdc20ba1a96ba19e986535eef73ca61f4e12239b91b9191492a02205c91d55e4b1f349c2c3e7b72a43da8ce36e31ae97fb48ba1108e3af49db861d48114e9fd61a1ce3a3a9ec0e140c0d1f689953bcbca6ae1f1f9ea7c04747970657d0570726f6f66e1ea7c10756e7369676e65645f74785f686173687d4033343362313730656561313730363736663564623833383161663037656132323865646235633730393762323130646532356264396633383262656665396234e1ea7c0c736f757263655f636861696e7d066178656c6172e1ea7c0a6d6573736167655f69647d493078613932633237326330383735366530653965643664353063326466636164346234303439346433376466656235633236633236343439616562313730623430362d343732313238e1f1"}}}}"#,
+        )
+        .unwrap();
+
+        let output = axelard_query_result.unwrap();
+        let actual_json: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+        assert_eq!(json_value, actual_json);
     }
 }
