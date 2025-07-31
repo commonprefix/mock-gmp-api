@@ -538,8 +538,13 @@ pub struct EventData {
 
 #[cfg(test)]
 mod tests {
-    use base64::{Engine, engine::general_purpose};
+    use chrono::DateTime;
     use serde_json::Value;
+
+    use crate::{
+        LapinConnection,
+        subscriber::{DesiredEventType, Subscriber},
+    };
 
     #[tokio::test]
     async fn test_proof_query() {
@@ -559,7 +564,7 @@ mod tests {
             .output()
             .await;
 
-        println!("{:?}", axelard_query_result);
+        //println!("{:?}", axelard_query_result);
         assert!(axelard_query_result.is_ok());
 
         let json_value = serde_json::from_str::<Value>(
@@ -581,9 +586,40 @@ mod tests {
             .unwrap_or("");
 
         // Base64 encode the execute_data
-        let encoded_execute_data = general_purpose::STANDARD.encode(execute_data);
+        //let encoded_execute_data = general_purpose::STANDARD.encode(execute_data);
 
-        println!("Encoded execute data: {}", encoded_execute_data);
+        //println!("Encoded execute data: {}", encoded_execute_data);
         assert!(!execute_data.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_event_fields_from_script() {
+        let axelard_query_script_str = format!(
+            "axelard query txs --events 'wasm-quorum_reached._contract_address=axelar1w0cwqtytmjuhak4v0rd4fy65pugqcxz4g48n6puw55zcy896e6ksn9gkj2' --node http://devnet-amplifier.axelar.dev:26657/ --output json --limit 100 --page 69"
+        );
+
+        let maybe_quorum_reached_event_fields =
+            Subscriber::<LapinConnection>::get_event_fields_from_script(
+                axelard_query_script_str,
+                DesiredEventType::QuorumReached,
+                "\"7438\"".to_string(),
+                DateTime::parse_from_rfc3339("1970-01-01T00:00:00Z")
+                    .unwrap()
+                    .into(),
+            )
+            .await;
+
+        match maybe_quorum_reached_event_fields {
+            Ok(Some(event_fields)) => {
+                println!("{:?}", event_fields);
+            }
+            Ok(None) => {
+                panic!("No event found with poll_id '\"7438\"' on page 69");
+                // This is expected if the poll_id doesn't exist - test should pass
+            }
+            Err(e) => {
+                panic!("Query failed: {}", e);
+            }
+        }
     }
 }

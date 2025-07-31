@@ -122,7 +122,14 @@ pub fn extract_info_from_script(
                     .unwrap_or("");
                 let chain = attributes
                     .iter()
-                    .find(|attr| attr.get("key").and_then(|v| v.as_str()).unwrap_or("") == "chain")
+                    .find(|attr| {
+                        let key = attr.get("key").and_then(|v| v.as_str()).unwrap_or("");
+                        match event_type {
+                            "wasm-messages_poll_started" => key == "source_chain",
+                            "wasm-signing_started" => key == "chain",
+                            _ => false,
+                        }
+                    })
                     .and_then(|attr| attr.get("value").and_then(|v| v.as_str()))
                     .unwrap_or("");
                 if !desired_id.is_empty() && !contract_address.is_empty() && !chain.is_empty() {
